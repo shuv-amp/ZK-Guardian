@@ -1,339 +1,50 @@
-# ZK Guardian
+# Welcome to your Expo app 👋
 
-## 🎯 Overview
+This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
-**ZK Guardian** is a research prototype that applies zero-knowledge cryptography to healthcare data access control. Built on industry-standard HL7 FHIR, it demonstrates how cryptographic proofs can verify that data access complies with patient consent without exposing sensitive information.
+## Get started
 
-### Academic Context
+1. Install dependencies
 
-This project was developed as part of advanced cryptography and healthcare informatics research, exploring the practical application of zk-SNARKs (Zero-Knowledge Succinct Non-Interactive Arguments of Knowledge) in HIPAA-compliant environments.
+   ```bash
+   npm install
+   ```
 
-**Research Focus Areas:**
-- Privacy-preserving access control in electronic health records
-- Zero-knowledge proof systems for regulatory compliance
-- Blockchain-based audit trails for healthcare
-- FHIR standard integration with cryptographic protocols
+2. Start the app
 
----
+   ```bash
+   npx expo start
+   ```
 
-## 🔍 The Problem
+In the output, you'll find options to open the app in a
 
-Modern healthcare systems face a critical verification gap:
+- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
+- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
+- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
+- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Current State: Trust-Based Access Control                  │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ❌ Internal logs that patients cannot independently verify │
-│  ❌ Compliance audits depend on trusting provider records   │
-│  ❌ No cryptographic proof that access followed consent     │
-│  ❌ Difficult to detect unauthorized access after the fact  │
-│  ❌ Audit trails can be modified by privileged users        │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
-While HL7 FHIR enables data interoperability and SMART on FHIR provides OAuth-based authorization, **neither generates cryptographic proof that each access request actually complied with patient consent policies**.
+## Get a fresh project
 
----
-
-## ✨ Our Solution
-
-ZK Guardian adds a cryptographic compliance layer to standard FHIR-based access:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  ZK Guardian: Proof-Based Access Control                    │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ✅ Mathematical proof that access followed consent rules   │
-│  ✅ Patient identity and medical data never leave the client│
-│  ✅ Immutable blockchain audit trail of all verifications   │
-│  ✅ Independently verifiable by patients and auditors       │
-│  ✅ Standards-compliant FHIR resource integration           │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Core Capabilities
-
-1. **Patient-Controlled Consent**: Mobile app for granting granular permissions (data type, role, time window)
-2. **Provider Access Requests**: Clinician app for requesting FHIR resource access
-3. **Zero-Knowledge Proof Generation**: Client-side proof that access matches consent, without revealing details
-4. **On-Chain Verification**: Blockchain verifier contract that validates proofs and emits audit events
-5. **FHIR Integration**: Native support for Patient, Practitioner, Consent, and Observation resources
-
----
-
-## 🔑 Key Innovation
-
-### The AccessIsAllowed Circuit
-
-At the heart of ZK Guardian is a custom Circom circuit that proves access authorization:
-
-```
-Prover (Client)                    Verifier (Blockchain)
-     │                                     │
-     │  Private Inputs:                    │
-     │  • User ID                          │
-     │  • User Role                        │
-     │  • Resource Type                    │
-     │  • Consent Policy                   │
-     │  • Timestamp                        │
-     │                                     │
-     │  ┌──────────────────────┐           │
-     │  │  AccessIsAllowed     │           │
-     │  │  Circom Circuit      │           │
-     │  │                      │           │
-     │  │  Checks:             │           │
-     │  │  1. Role matches     │           │
-     │  │  2. Data allowed     │           │
-     │  │  3. Time valid       │           │
-     │  └──────────────────────┘           │
-     │            │                        │
-     │            ▼                        │
-     │  ┌──────────────────────┐           │
-     │  │   Groth16 Proof      │           │
-     │  │   (~200 bytes)       │           │
-     │  └──────────────────────┘           │
-     │            │                        │
-     ├────────────┼─────────────────────────▶
-     │            │                        │
-     │            │        ┌──────────────────────┐
-     │            │        │  Solidity Verifier   │
-     │            │        │  • Verify proof      │
-     │            │        │  • Emit AuditEvent   │
-     │            │        │  • No PHI on-chain   │
-     │            │        └──────────────────────┘
-     │            │                         │
-     │            ◀─────────────────────────┤
-     │            │                         │
-     │       ✓ Access Granted               │
-     │       📝 Immutable Receipt           │
-```
-
-**Key Property**: The proof reveals **only** that access was authorized—not the patient identity, medical data, or specific consent terms.
-
----
-
-## 🏗️ Architecture
-
-### System Components
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                         ZK GUARDIAN ARCHITECTURE                     │
-└──────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│                          CLIENT LAYER                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌────────────────────────┐         ┌────────────────────────┐      │
-│  │   Patient Mobile App   │         │  Clinician Mobile App  │      │
-│  │   ─────────────────    │         │  ──────────────────    │      │
-│  │   • Consent management │         │  • Access requests     │      │
-│  │   • View access history│         │  • View patient data   │      │
-│  │   • Grant/revoke       │         │  • Proof generation    │      │
-│  │                        │         │                        │      │
-│  │   React Native + Expo  │         │   React Native + Expo  │      │
-│  └────────────────────────┘         └────────────────────────┘      │
-│              │                                    │                 │
-└──────────────┼────────────────────────────────────┼─────────────────┘
-               │                                    │
-               └─────────────┬──────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         GATEWAY LAYER                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│                    ┌──────────────────────────┐                     │
-│                    │   Node.js + Express      │                     │
-│                    │   ─────────────────      │                     │
-│                    │   • JWT Authentication   │                     │
-│                    │   • Request routing      │                     │
-│                    │   • FHIR coordination    │                     │
-│                    │   • Proof orchestration  │                     │
-│                    └──────────────────────────┘                     │
-│                               │                                     │
-└───────────────────────────────┼─────────────────────────────────────┘
-                                │
-                ┌───────────────┼───────────────┐
-                │               │               │
-                ▼               ▼               ▼
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│  FHIR SERVER     │  │  ZK PROVER       │  │  BLOCKCHAIN      │
-│  ─────────       │  │  ─────────       │  │  ──────────      │
-│                  │  │                  │  │                  │
-│  HAPI FHIR R4    │  │  Circom/snarkjs  │  │  Polygon Amoy    │
-│                  │  │                  │  │                  │
-│  • Patient       │  │  • Circuit       │  │  • Verifier      │
-│  • Practitioner  │  │    compilation   │  │    contract      │
-│  • Consent       │  │  • Witness gen   │  │  • Audit events  │
-│  • Observation   │  │  • Proof gen     │  │  • Immutable log │
-│                  │  │    (~2 sec)      │  │                  │
-└──────────────────┘  └──────────────────┘  └──────────────────┘
-```
-
-### Data Flow: Access Request Lifecycle
-
-```
-1. Patient grants consent (FHIR Consent resource created)
-2. Clinician requests access to specific data
-3. Gateway retrieves relevant FHIR resources
-4. Client generates AccessIsAllowed proof
-5. Gateway submits proof to on-chain verifier
-6. Smart contract validates and emits AuditEvent
-7. Access granted, receipt stored on blockchain
-```
-
----
-
-## 🛠️ Technology Stack
-
-### Core Technologies
-
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| **Mobile** | React Native 0.74 + Expo SDK 51 | Cross-platform patient/provider apps |
-| **Gateway** | Node.js 20 LTS + Express.js | API gateway and orchestration |
-| **Healthcare** | HAPI FHIR R4 (HL7 FHIR) | Standards-compliant EHR integration |
-| **Zero-Knowledge** | Circom 2.1 + snarkjs 0.7 | zk-SNARK circuit and proof generation |
-| **Blockchain** | Solidity 0.8.20 + Polygon Amoy | On-chain verification and audit |
-| **Database** | PostgreSQL 16 | Application state and metadata |
-
-### Development Tools
+When you're ready, run:
 
 ```bash
-Circom 2.1        # ZK circuit compiler
-snarkjs 0.7.3     # Proof generation library
-Hardhat           # Smart contract development
-Foundry           # Contract testing framework
-Docker            # Containerized FHIR server
-GitHub Actions    # CI/CD pipeline
+npm run reset-project
 ```
 
----
+This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
 
-## 🚀 Getting Started
+## Learn more
 
-### Prerequisites
+To learn more about developing your project with Expo, look at the following resources:
 
-```bash
-# Required
-node >= 20.0.0
-pnpm >= 8.0.0 (or npm/yarn)
+- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
+- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
 
-# For ZK development
-circom >= 2.1.0
-snarkjs >= 0.7.0
+## Join the community
 
-# For blockchain development
-foundry (forge, cast, anvil)
-```
+Join our community of developers creating universal apps.
 
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/shuv-amp/zk-guardian.git
-cd zk-guardian
-
-# Install dependencies
-pnpm install
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your configuration
-```
----
-
-## 📁 Project Structure
-
-```
-zk-guardian/
-│
-├── apps/
-│   ├── mobile/                    # React Native mobile applications
-│   │   ├── app/                   # Expo Router screens
-│   │   │   ├── (auth)/            # Authentication flow
-│   │   │   ├── (patient)/         # Patient app screens
-│   │   │   └── (provider)/        # Provider app screens
-│   │   └── src/
-│   │       ├── components/        # Reusable UI components
-│   │       ├── services/          # API clients
-│   │       └── lib/               # ZK proof generation
-│   │
-│   └── web/
-│       └── admin-dashboard/       # Admin compliance dashboard
-│
-├── services/
-│   ├── api-gateway/               # Express.js gateway
-│   │   ├── src/
-│   │   │   ├── routes/            # API endpoints
-│   │   │   ├── middleware/        # Auth, validation
-│   │   │   └── controllers/       # Business logic
-│   │
-│   ├── fhir-gateway/              # HAPI FHIR integration
-│   │   └── src/
-│   │       ├── resources/         # FHIR resource handlers
-│   │       └── consent/           # Consent engine
-│   │
-│   └── blockchain-service/        # Contract interaction
-│       └── src/
-│           ├── contracts/         # Deployed contract ABIs
-│           └── verifier/          # Proof verification client
-│
-├── packages/
-│   ├── zk-circuits/               # Circom circuits
-│   │   ├── circuits/
-│   │   │   ├── AccessIsAllowed.circom
-│   │   │   ├── RoleVerifier.circom
-│   │   │   ├── ResourceVerifier.circom
-│   │   │   └── TimeVerifier.circom
-│   │   ├── build/                 # Compiled outputs
-│   │   ├── scripts/
-│   │   │   ├── compile.sh         # Compile circuits
-│   │   │   └── setup.sh           # Generate keys
-│   │   └── test/                  # Circuit unit tests
-│   │
-│   ├── contracts/                 # Solidity smart contracts
-│   │   ├── src/
-│   │   │   ├── ZKAccessVerifier.sol
-│   │   │   ├── ConsentRegistry.sol
-│   │   │   └── AuditTrail.sol
-│   │   ├── test/                  # Foundry tests
-│   │   └── script/                # Deployment scripts
-│   │
-│   └── shared/                    # Shared TypeScript types
-│       ├── types/
-│       │   ├── fhir.ts            # FHIR resource types
-│       │   ├── consent.ts         # Consent models
-│       │   └── proof.ts           # Proof types
-│       └── utils/
-│
-├── docs/
-│   ├── PROJECT_PROPOSAL.md        # Academic proposal
-│   ├── ARCHITECTURE.md            # System architecture
-│   ├── ZK_CIRCUITS.md             # Circuit documentation
-│   ├── SMART_CONTRACTS.md         # Contract specifications
-│   ├── FHIR_INTEGRATION.md        # FHIR implementation guide
-│   └── SECURITY.md                # Security analysis
-│
-├── .env.example                   # Environment template
-├── docker-compose.yml             # FHIR server setup
-├── package.json                   # Root package.json
-├── pnpm-workspace.yaml            # Monorepo configuration
-└── turbo.json                     # Turborepo config
-```
-
----
-
-<div align="center">
-
-*ZK Guardian is a research prototype intended for academic and educational purposes.  
-Not suitable for production healthcare environments without extensive additional security review and regulatory approval.*
-
-</div>
+- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
+- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
