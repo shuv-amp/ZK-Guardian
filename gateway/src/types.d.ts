@@ -24,6 +24,8 @@ interface SMARTContext {
     patient?: string;
     /** Practitioner ID if clinician */
     practitioner?: string;
+    /** Practitioner Name */
+    practitionerName?: string;
     /** Granted scopes */
     scope: string;
     /** Issuer URL */

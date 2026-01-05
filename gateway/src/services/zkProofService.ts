@@ -105,12 +105,12 @@ class ZKProofService {
             timestamp: currentTimestamp
         });
 
-        logger.info(`Queuing ZK proof for ${resourceType} access`, {
+        logger.info({
             patientId,
             clinicianId,
             resourceType,
             queueSize: this.queue.length
-        });
+        }, `Queuing ZK proof for ${resourceType} access`);
 
         // 3. Generate Proof with timeout (ZK2: 30s max) AND Queue (ZK4: max 100)
         // We wrap the heavy computation in the queue
@@ -206,7 +206,7 @@ class ZKProofService {
 
             return bundle.entry[0].resource;
         } catch (error: any) {
-            logger.warn(`Failed to fetch consent for ${patientId}`, { error: error.message });
+            logger.warn({ error: error.message }, `Failed to fetch consent for ${patientId}`);
             // For DEV mode only: return a mock consent if connection fails?
             // "Super reasoning": NO. High stake. If fetch fails, we fail.
             // Exception: If HAPI is not running yet during this *test* phase, maybe mock?
@@ -237,10 +237,10 @@ class ZKProofService {
             return result;
         } catch (error: any) {
             if (error.message === "PROOF_TIMEOUT") {
-                logger.error("ZK proof generation timed out", {
+                logger.error({
                     timeout: PROOF_TIMEOUT_MS,
                     inputs: JSON.stringify(inputs).slice(0, 200) // Log partial inputs for debugging
-                });
+                }, "ZK proof generation timed out");
                 throw new Error("PROOF_TIMEOUT: Proof generation exceeded 30 second limit");
             }
             throw error;
@@ -268,7 +268,7 @@ class ZKProofService {
                 .update(fs.readFileSync(CIRCUIT_WASM))
                 .digest("hex");
             checksums.wasm = wasmHash;
-            logger.info("Circuit WASM checksum", { path: CIRCUIT_WASM, sha256: wasmHash });
+            logger.info({ path: CIRCUIT_WASM, sha256: wasmHash }, "Circuit WASM checksum");
         }
 
         // Check ZKEY file
@@ -280,7 +280,7 @@ class ZKProofService {
                 .update(fs.readFileSync(CIRCUIT_ZKEY))
                 .digest("hex");
             checksums.zkey = zkeyHash;
-            logger.info("Circuit ZKEY checksum", { path: CIRCUIT_ZKEY, sha256: zkeyHash });
+            logger.info({ path: CIRCUIT_ZKEY, sha256: zkeyHash }, "Circuit ZKEY checksum");
         }
 
         // Check verification key
@@ -306,7 +306,7 @@ class ZKProofService {
             } catch (e) {
                 errors.push("Verification key is not valid JSON");
             }
-            logger.info("Verification key checksum", { path: VERIFICATION_KEY, sha256: vkeyHash });
+            logger.info({ path: VERIFICATION_KEY, sha256: vkeyHash }, "Verification key checksum");
         }
 
         // Optional: Compare against known good checksums from environment
@@ -353,7 +353,7 @@ class ZKProofService {
             const result = await this.snarkjs.groth16.verify(vkey, publicSignals, snarkjsProof);
             return result;
         } catch (error: any) {
-            logger.error("Proof verification failed", { error: error.message });
+            logger.error({ error: error.message }, "Proof verification failed");
             return false;
         }
     }

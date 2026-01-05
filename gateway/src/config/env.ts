@@ -30,6 +30,7 @@ const envSchema = z.object({
     POLYGON_AMOY_RPC: z.string().url().optional(),
     AUDIT_CONTRACT_ADDRESS: z.string().optional(),
     GATEWAY_PRIVATE_KEY: z.string().optional(),
+    CONSENT_REVOCATION_REGISTRY_ADDRESS: z.string().optional(),
 
     // SMART on FHIR
     SMART_ISSUER: z.string().url().optional(),

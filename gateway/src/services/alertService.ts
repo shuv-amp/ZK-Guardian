@@ -137,9 +137,9 @@ class AlertService {
                         relatedResourceType: alert.relatedAccess.resourceType
                     }))
                 });
-                
-                logger.info({ 
-                    patientId, 
+
+                logger.info({
+                    patientId,
                     alertCount: newAlerts.length,
                     types: newAlerts.map(a => a.type)
                 }, 'Access alerts created');
@@ -163,7 +163,7 @@ class AlertService {
         limit?: number;
     }): Promise<AccessAlert[]> {
         const where: any = { patientId };
-        
+
         if (options?.acknowledged !== undefined) {
             where.acknowledgedAt = options.acknowledged ? { not: null } : null;
         }
@@ -215,7 +215,7 @@ class AlertService {
                     acknowledgedNotes: notes
                 }
             });
-            
+
             logger.info({ patientId, alertId }, 'Alert acknowledged');
             return true;
         } catch (error) {
@@ -290,6 +290,7 @@ class AlertService {
         const history: AccessRecord[] = records.map(r => ({
             id: r.id,
             accessEventHash: r.accessEventHash,
+            resourceId: r.resourceId || '',
             resourceType: r.resourceType,
             accessTimestamp: r.createdAt.toISOString(),
             clinician: {
@@ -318,12 +319,12 @@ class AlertService {
     private updateCache(patientId: string, record: AccessRecord): void {
         const existing = this.recentHistoryCache.get(patientId) || [];
         existing.unshift(record);
-        
+
         // Limit cache size
         if (existing.length > this.CACHE_SIZE_LIMIT) {
             existing.pop();
         }
-        
+
         this.recentHistoryCache.set(patientId, existing);
     }
 
