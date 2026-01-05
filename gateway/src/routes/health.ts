@@ -5,7 +5,11 @@
 import { Router } from 'express';
 import { env } from '../config/env.js';
 
-export const healthRouter = Router();
+/**
+ * Health Check Routes
+ * /health, /ready
+ */
+export const healthRouter: Router = Router();
 
 healthRouter.get('/', (_req, res) => {
     res.json({
