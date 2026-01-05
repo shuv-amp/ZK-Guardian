@@ -3,7 +3,7 @@
  * Privacy-preserving FHIR proxy with ZK proof generation
  */
 
-import express from 'express';
+import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { WebSocketServer } from 'ws';
@@ -17,7 +17,7 @@ import { smartAuthMiddleware } from './middleware/smartAuth.js';
 import { setupConsentWebSocket } from './services/consentHandshake.js';
 import { setupMetrics } from './metrics/prometheus.js';
 
-const app = express();
+const app: Express = express();
 const server = createServer(app);
 
 // Security middleware
@@ -51,7 +51,8 @@ app.use((_req, res) => {
 });
 
 // Error handler
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+// Error handler
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.error('Unhandled error:', err);
     res.status(500).json({
         error: 'Internal server error',
@@ -60,10 +61,20 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 // Start server
-server.listen(env.PORT, () => {
-    console.log(`🚀 ZK Guardian Gateway running on port ${env.PORT}`);
-    console.log(`📡 WebSocket: ws://localhost:${env.PORT}/ws/consent`);
-    console.log(`🔬 Environment: ${env.NODE_ENV}`);
-});
+(async () => {
+    try {
+        const { zkProofService } = await import('./services/zkProofService.js');
+        await zkProofService.initialize();
+
+        server.listen(env.PORT, () => {
+            console.log(`🚀 ZK Guardian Gateway running on port ${env.PORT}`);
+            console.log(`📡 WebSocket: ws://localhost:${env.PORT}/ws/consent`);
+            console.log(`🔬 Environment: ${env.NODE_ENV}`);
+        });
+    } catch (error) {
+        console.error("Failed to start gateway:", error);
+        process.exit(1);
+    }
+})();
 
 export { app, server };
