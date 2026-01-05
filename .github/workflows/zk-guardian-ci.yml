@@ -11,7 +11,7 @@ env:
   POLYGON_AMOY_RPC: "https://rpc-amoy.polygon.technology"
 
 jobs:
-  # Job 1: Verify Circom Circuits
+  # Job 1: Verify & Test Circuits
   verify-circuits:
     runs-on: ubuntu-latest
     steps:
@@ -21,29 +21,38 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
       
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
       - name: Install Circom
         run: |
           curl -Ls https://github.com/iden3/circom/releases/download/v2.1.8/circom-linux-amd64 -o /usr/local/bin/circom
           chmod +x /usr/local/bin/circom
       
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       
-      - name: Compile circuits
+      - name: Compile & Trust Setup (Mock)
+        # We manually run these to ensure the directory structure exists for tests
+        working-directory: ./circuits
         run: |
-          mkdir -p circuits/build
-          # Note: In production CI, we might skip full recompile if artifacts cached, 
-          # but here we ensure correctness.
-          circom circuits/AccessIsAllowed.circom --r1cs --wasm --sym -o circuits/build -l node_modules/circomlib/circuits
+          mkdir -p build
+          circom AccessIsAllowed.circom --r1cs --wasm --sym -o build -l ../node_modules/circomlib/circuits
+          
+          # Mock Setup
+          snarkjs powersoftau new bn128 12 build/pot12_0000.ptau -v
+          snarkjs powersoftau prepare phase2 build/pot12_0000.ptau build/pot12_final.ptau -v
+          snarkjs groth16 setup build/AccessIsAllowed.r1cs build/pot12_final.ptau build/AccessIsAllowed_final.zkey
       
-      - name: Verify circuit constraints
-        run: |
-          snarkjs r1cs info circuits/build/AccessIsAllowed.r1cs
+      - name: Run Circuit Tests
+        working-directory: ./circuits
+        run: npm test
 
-  # Job 2: Run Tests
-  test:
+  # Job 2: Test Contracts & Gateway
+  test-monorepo:
     runs-on: ubuntu-latest
     needs: verify-circuits
     steps:
@@ -53,42 +62,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
       
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
       - name: Install dependencies
-        run: npm ci
-
-      # Re-compile circuits or fetch from artifacts (simplified here to re-compile for robustness)
-      - name: Install Circom
-        run: |
-          curl -Ls https://github.com/iden3/circom/releases/download/v2.1.8/circom-linux-amd64 -o /usr/local/bin/circom
-          chmod +x /usr/local/bin/circom
-
-      - name: Compile circuits
-        run: |
-          mkdir -p circuits/build
-          circom circuits/AccessIsAllowed.circom --r1cs --wasm --sym -o circuits/build -l node_modules/circomlib/circuits
-
-      - name: Mock Trusted Setup (Fast for CI)
-        run: |
-          # Use a pre-generated ptau or generate a small one for testing
-          snarkjs powersoftau new bn128 12 circuits/build/pot12_0000.ptau -v
-          snarkjs powersoftau prepare phase2 circuits/build/pot12_0000.ptau circuits/build/pot12_final.ptau -v
-          snarkjs groth16 setup circuits/build/AccessIsAllowed.r1cs circuits/build/pot12_final.ptau circuits/build/AccessIsAllowed_final.zkey
-
-      - name: Run Circuit Tests
-        run: npm test -- --grep "AccessIsAllowed"
+        run: pnpm install --frozen-lockfile
 
       - name: Run Contract Tests
-        working-directory: ./contracts
-        run: |
-          npm ci
-          npx hardhat test
+        run: pnpm --filter contracts test
+
+      # Note: Gateway tests might require complex mocking of services, skipping for now in basic CI unless configured
 
   # Job 3: Deploy Verifier Contract (Production Only)
   deploy-contract:
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [test-monorepo]
     if: github.ref == 'refs/heads/main'
     environment: production
     steps:
@@ -98,10 +89,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       
       - name: Install dependencies
-        run: npm ci && cd contracts && npm ci
+        run: pnpm install --frozen-lockfile
       
       - name: Deploy to Polygon Amoy
         env:
@@ -109,5 +104,4 @@ jobs:
           POLYGONSCAN_API_KEY: ${{ secrets.POLYGONSCAN_API_KEY }}
         working-directory: ./contracts
         run: |
-          # Uses the custom script we wrote, ensuring consistency!
           npx hardhat run scripts/deploy.js --network amoy
