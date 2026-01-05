@@ -46,6 +46,7 @@ jobs:
           npx snarkjs powersoftau new bn128 12 build/pot12_0000.ptau -v
           npx snarkjs powersoftau prepare phase2 build/pot12_0000.ptau build/pot12_final.ptau -v
           npx snarkjs groth16 setup build/AccessIsAllowed.r1cs build/pot12_final.ptau build/AccessIsAllowed_final.zkey
+          npx snarkjs zkey export verificationkey build/AccessIsAllowed_final.zkey build/verification_key.json
       
       - name: Run Circuit Tests
         working-directory: ./circuits
