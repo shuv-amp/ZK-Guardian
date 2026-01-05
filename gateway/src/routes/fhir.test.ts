@@ -2,13 +2,34 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express, { Express } from 'express';
+// Note: We use the .js extension because we are using ESM in the actual code
 import { fhirRouter } from './fhir.js';
+
+// --- Mocks ---
 
 // Mock ZK Proof Service
 const mockGenerate = vi.fn();
 vi.mock('../services/zkProofService', () => ({
     zkProofService: {
         generateAccessProof: (...args: any[]) => mockGenerate(...args)
+    }
+}));
+
+// Mock Consent Handshake
+const mockRequestConsent = vi.fn();
+vi.mock('../services/consentHandshake', () => ({
+    consentHandshakeService: {
+        requestConsent: (...args: any[]) => mockRequestConsent(...args)
+    }
+}));
+
+// Mock Axios (for Consent Creation)
+const mockAxiosPut = vi.fn();
+vi.mock('axios', () => ({
+    default: {
+        put: (...args: any[]) => mockAxiosPut(...args),
+        get: vi.fn(),
+        post: vi.fn()
     }
 }));
 
@@ -67,7 +88,6 @@ describe('FHIR Proxy Routes', () => {
 
         expect(res.status).toBe(200);
         expect(mockGenerate).toHaveBeenCalled();
-        // search query hash check logic is internal, but we know it calls generate
     });
 
     it('should bypass ZK Audit for non-clinical resources', async () => {
@@ -76,13 +96,48 @@ describe('FHIR Proxy Routes', () => {
         expect(mockGenerate).not.toHaveBeenCalled();
     });
 
-    it('should return 403 if ZK Service throws NO_ACTIVE_CONSENT', async () => {
-        mockGenerate.mockRejectedValue(new Error("NO_ACTIVE_CONSENT"));
+    // --- JIT Consent Handshake Tests ---
+
+    it('should trigger JIT Handshake when consent is missing', async () => {
+        // First call fails
+        mockGenerate.mockRejectedValueOnce(new Error("NO_ACTIVE_CONSENT"));
+        // Handshake succeeds
+        mockRequestConsent.mockResolvedValue(true);
+        // Axios creates consent
+        mockAxiosPut.mockResolvedValue({ status: 200 });
+        // Second call (Retry) succeeds
+        mockGenerate.mockResolvedValueOnce({
+            proofHash: "0xProofRetry",
+            publicSignals: ["0xPolicy", "123456", "0xEventRetry"]
+        });
+
+        const res = await request(app).get('/fhir/Patient/123');
+
+        expect(res.status).toBe(200);
+        expect(mockRequestConsent).toHaveBeenCalledWith("123", expect.any(Object));
+        expect(mockAxiosPut).toHaveBeenCalled(); // Consent creation
+        expect(mockGenerate).toHaveBeenCalledTimes(2); // Initial fail + Retry
+    });
+
+    it('should deny access if JIT Handshake is refused', async () => {
+        mockGenerate.mockRejectedValueOnce(new Error("NO_ACTIVE_CONSENT"));
+        mockRequestConsent.mockResolvedValue(false); // Denied
 
         const res = await request(app).get('/fhir/Patient/123');
 
         expect(res.status).toBe(403);
         expect(res.body.error).toContain("Access Denied");
+        expect(mockGenerate).toHaveBeenCalledTimes(1); // No retry
+    });
+
+    it('should deny access if Handshake fails/times out', async () => {
+        mockGenerate.mockRejectedValueOnce(new Error("NO_ACTIVE_CONSENT"));
+        mockRequestConsent.mockRejectedValue(new Error("Timeout"));
+
+        const res = await request(app).get('/fhir/Patient/123');
+
+        expect(res.status).toBe(403);
+        expect(res.body.error).toContain("Consent handshake failed");
     });
 
     it('should return 500 if ZK Service fails generically', async () => {
