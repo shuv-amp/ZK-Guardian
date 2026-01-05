@@ -1,0 +1,190 @@
+// Prisma Schema for ZK Guardian
+// Production-ready database schema for audit logging, alerts, and break-glass events
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// Core Audit Log
+// ============================================
+model AuditLog {
+  id              String   @id @default(uuid())
+  patientId       String   @map("patient_id")
+  clinicianId     String   @map("clinician_id")
+  clinicianName   String?  @map("clinician_name")
+  department      String?
+  resourceType    String   @map("resource_type")
+  resourceId      String?  @map("resource_id")
+  accessEventHash String   @map("access_event_hash")
+  txHash          String?  @map("tx_hash")
+  blockNumber     BigInt?  @map("block_number")
+  isBreakGlass    Boolean  @default(false) @map("is_break_glass")
+  purpose         String?
+  verified        Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Relations
+  alerts          AccessAlert[]
+  breakGlassEvent BreakGlassEvent?
+
+  @@index([patientId])
+  @@index([clinicianId])
+  @@index([accessEventHash])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================
+// Access Alerts for Patients
+// ============================================
+model AccessAlert {
+  id              String    @id @default(uuid())
+  patientId       String    @map("patient_id")
+  auditLogId      String?   @map("audit_log_id")
+  type            String    // AFTER_HOURS, UNUSUAL_VOLUME, NEW_PROVIDER, SENSITIVE_RESOURCE, BREAK_GLASS
+  severity        String    // LOW, MEDIUM, HIGH
+  message         String
+  suggestedAction String?   @map("suggested_action")
+  relatedClinician String?  @map("related_clinician")
+  relatedResourceType String? @map("related_resource_type")
+  acknowledgedAt  DateTime? @map("acknowledged_at")
+  acknowledgedNotes String? @map("acknowledged_notes")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  auditLog        AuditLog? @relation(fields: [auditLogId], references: [id])
+
+  @@index([patientId])
+  @@index([patientId, acknowledgedAt])
+  @@index([createdAt])
+  @@map("access_alerts")
+}
+
+// ============================================
+// Break-Glass Emergency Access (HIPAA Required)
+// ============================================
+model BreakGlassEvent {
+  id                String    @id @default(uuid())
+  auditLogId        String    @unique @map("audit_log_id")
+  clinicianId       String    @map("clinician_id")
+  patientId         String    @map("patient_id")
+  reason            String    // LIFE_THREATENING_EMERGENCY, UNCONSCIOUS_PATIENT, etc.
+  justificationHash String    @map("justification_hash")
+  witnessId         String?   @map("witness_id")
+  reviewDeadline    DateTime  @map("review_deadline")
+  reviewedAt        DateTime? @map("reviewed_at")
+  reviewedBy        String?   @map("reviewed_by")
+  complianceNotified Boolean  @default(false) @map("compliance_notified")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  auditLog          AuditLog  @relation(fields: [auditLogId], references: [id])
+
+  @@index([patientId])
+  @@index([clinicianId])
+  @@index([reviewDeadline])
+  @@map("break_glass_events")
+}
+
+// ============================================
+// Break-Glass Sessions (Active Emergency Access)
+// ============================================
+model BreakGlassSession {
+  id                  String    @id @default(uuid())
+  patientId           String    @map("patient_id")
+  clinicianId         String    @map("clinician_id")
+  clinicianName       String    @map("clinician_name")
+  department          String?
+  reason              String    // LIFE_THREATENING_EMERGENCY, etc.
+  justification       String
+  clinicianSignature  String    @map("clinician_signature")
+  witnessId           String?   @map("witness_id")
+  status              String    @default("ACTIVE") // ACTIVE, CLOSED, EXPIRED
+  expiresAt           DateTime  @map("expires_at")
+  closedAt            DateTime? @map("closed_at")
+  closureNotes        String?   @map("closure_notes")
+  accessedResources   String[]  @map("accessed_resources")
+  patientHash         String    @map("patient_hash")
+  clinicianHash       String    @map("clinician_hash")
+  reasonHash          String    @map("reason_hash")
+  txHash              String?   @map("tx_hash")
+  requestId           String    @map("request_id")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  @@unique([patientId, clinicianId, status], name: "unique_active_session")
+  @@index([patientId])
+  @@index([clinicianId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("break_glass_sessions")
+}
+
+// ============================================
+// Consent Cache (Mirror from FHIR)
+// ============================================
+model ConsentCache {
+  id                String    @id @default(uuid())
+  patientId         String    @map("patient_id")
+  fhirConsentId     String    @unique @map("fhir_consent_id")
+  practitionerId    String?   @map("practitioner_id")
+  allowedCategories String[]  @map("allowed_categories")
+  deniedCategories  String[]  @map("denied_categories")
+  validFrom         DateTime  @map("valid_from")
+  validUntil        DateTime  @map("valid_until")
+  status            String    @default("active") // active, inactive, revoked
+  revokedAt         DateTime? @map("revoked_at")
+  syncedAt          DateTime  @default(now()) @map("synced_at")
+
+  @@index([patientId])
+  @@index([practitionerId])
+  @@index([status])
+  @@map("consent_cache")
+}
+
+// ============================================
+// Batch Proof Queue (backup to Redis)
+// ============================================
+model BatchProofQueue {
+  id            String   @id @default(uuid())
+  proofA        String   @map("proof_a")      // JSON
+  proofB        String   @map("proof_b")      // JSON
+  proofC        String   @map("proof_c")      // JSON
+  publicSignals String   @map("public_signals") // JSON
+  patientId     String   @map("patient_id")
+  resourceType  String   @map("resource_type")
+  status        String   @default("pending")  // pending, processing, verified, failed
+  txHash        String?  @map("tx_hash")
+  error         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  processedAt   DateTime? @map("processed_at")
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("batch_proof_queue")
+}
+
+// ============================================
+// Proof Replay Protection (backup to Redis)
+// ============================================
+model ProofSubmission {
+  id            String    @id @default(uuid())
+  proofHash     String    @unique @map("proof_hash")
+  patientId     String?   @map("patient_id")
+  resourceType  String?   @map("resource_type")
+  clinicianId   String?   @map("clinician_id")
+  status        String    @default("pending") // pending, confirmed, failed
+  txHash        String?   @map("tx_hash")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  confirmedAt   DateTime? @map("confirmed_at")
+  expiresAt     DateTime  @map("expires_at")
+
+  @@index([proofHash])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("proof_submissions")
+}

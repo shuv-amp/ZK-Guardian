@@ -16,11 +16,14 @@ const getExtraConfig = () => {
     };
 };
 
+import { Platform } from 'react-native';
+
 const DEFAULTS = {
     development: {
         // Use 'localhost' for simulator, or your LAN IP for physical device
-        GATEWAY_URL: 'http://localhost:3000',
-        WS_URL: 'ws://localhost:3000/ws/consent',
+        // Android Emulator uses 10.0.2.2 for localhost
+        GATEWAY_URL: Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000',
+        WS_URL: Platform.OS === 'android' ? 'ws://10.0.2.2:3000/ws/consent' : 'ws://localhost:3000/ws/consent',
     },
     production: {
         // These MUST be overridden via EAS secrets or app.config.js

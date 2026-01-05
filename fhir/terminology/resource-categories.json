@@ -1,0 +1,52 @@
+{
+    "resourceType": "CodeSystem",
+    "id": "resource-category",
+    "url": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+    "version": "1.0.0",
+    "name": "ZKGuardianResourceCategory",
+    "title": "ZK Guardian Resource Category",
+    "status": "active",
+    "content": "complete",
+    "concept": [
+        {
+            "code": "laboratory",
+            "display": "Laboratory Results",
+            "definition": "Lab results including CBC, chemistry panels, urinalysis"
+        },
+        {
+            "code": "imaging",
+            "display": "Imaging Studies",
+            "definition": "Radiology including X-ray, MRI, CT, ultrasound"
+        },
+        {
+            "code": "vital-signs",
+            "display": "Vital Signs",
+            "definition": "Blood pressure, heart rate, temperature, respiratory rate"
+        },
+        {
+            "code": "medications",
+            "display": "Medication Records",
+            "definition": "Prescriptions, medication orders, administration records"
+        },
+        {
+            "code": "procedures",
+            "display": "Procedures",
+            "definition": "Surgical and procedural notes"
+        },
+        {
+            "code": "encounters",
+            "display": "Encounters",
+            "definition": "Visit history and encounter records"
+        },
+        {
+            "code": "conditions",
+            "display": "Conditions",
+            "definition": "Diagnoses, problems, health concerns"
+        },
+        {
+            "code": "allergies",
+            "display": "Allergies",
+            "definition": "Allergy and intolerance information"
+        }
+    ]
+}
