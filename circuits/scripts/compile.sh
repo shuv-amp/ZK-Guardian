@@ -2,6 +2,11 @@
 # ZK Guardian Circuit Compilation Script
 # Usage: ./scripts/compile.sh
 
+# Set up environment for Rust/Circom
+if [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+fi
+
 set -e
 
 CIRCUIT_NAME="AccessIsAllowed"

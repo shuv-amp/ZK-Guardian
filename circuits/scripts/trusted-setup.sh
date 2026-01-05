@@ -5,16 +5,20 @@
 set -e
 
 CIRCUIT_NAME="AccessIsAllowed"
+PTAU_SIZE=14
 BUILD_DIR="build"
 PTAU_FILE="powersOfTau28_hez_final_14.ptau"
 PTAU_URL="https://hermez.s3-eu-west-1.amazonaws.com/$PTAU_FILE"
 
 echo "🔐 Starting ZK Guardian Trusted Setup..."
 
-# Download Powers of Tau if not present
+# Generate locally (reliable for dev)
 if [ ! -f "$BUILD_DIR/$PTAU_FILE" ]; then
-  echo "📥 Downloading Hermez ceremony Powers of Tau..."
-  curl -L -o "$BUILD_DIR/$PTAU_FILE" "$PTAU_URL"
+  echo "⚡ Generating local Powers of Tau (Series 14)..."
+  snarkjs powersoftau new bn128 ${PTAU_SIZE} $BUILD_DIR/pot${PTAU_SIZE}_0000.ptau -v
+  snarkjs powersoftau contribute $BUILD_DIR/pot${PTAU_SIZE}_0000.ptau $BUILD_DIR/pot${PTAU_SIZE}_0001.ptau --name="First" -v -e="randomness"
+  snarkjs powersoftau prepare phase2 $BUILD_DIR/pot${PTAU_SIZE}_0001.ptau $BUILD_DIR/$PTAU_FILE -v
+  rm -f $BUILD_DIR/pot${PTAU_SIZE}_0000.ptau $BUILD_DIR/pot${PTAU_SIZE}_0001.ptau
 else
   echo "✅ Powers of Tau already present"
 fi

@@ -5,7 +5,7 @@
     "description": "ZK Guardian Circom circuits",
     "scripts": {
         "compile": "bash scripts/compile.sh",
-        "setup": "bash scripts/trusted-setup.sh",
+        "trusted-setup": "bash scripts/trusted-setup.sh",
         "test": "mocha test/**/*.test.js --timeout 120000",
         "clean": "rm -rf build/*.wasm build/*.r1cs build/*.zkey build/*.json"
     },
@@ -14,5 +14,8 @@
         "circomlibjs": "^0.1.7",
         "mocha": "^10.2.0",
         "snarkjs": "^0.7.3"
+    },
+    "dependencies": {
+        "circomlib": "^2.0.5"
     }
 }
