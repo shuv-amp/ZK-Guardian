@@ -1,0 +1,50 @@
+{
+    "description": "Test fixture for AccessIsAllowed circuit - valid consent scenario",
+    "scenario": "Clinician accessing patient lab results within valid consent window",
+    "private": {
+        "patientId": [
+            "12345678901234567890",
+            "98765432109876543210",
+            "11111111111111111111",
+            "22222222222222222222"
+        ],
+        "clinicianId": [
+            "55555555555555555555",
+            "66666666666666666666",
+            "77777777777777777777",
+            "88888888888888888888"
+        ],
+        "consentPolicyHash": "7891234567890123456789012345678901234567890123456789012345678901",
+        "requestedResourceId": [
+            "33333333333333333333",
+            "44444444444444444444",
+            "55555555555555555555",
+            "66666666666666666666"
+        ],
+        "allowedResourceCategories": [
+            "1234567890123456789012345678901234567890123456789012345678901234",
+            "2345678901234567890123456789012345678901234567890123456789012345",
+            "3456789012345678901234567890123456789012345678901234567890123456",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+        ],
+        "validFromTimestamp": "1704067200",
+        "validToTimestamp": "1735689600"
+    },
+    "public": {
+        "proofOfPolicyMatch": "COMPUTED_AT_RUNTIME",
+        "currentTimestamp": "1720000000",
+        "accessEventHash": "COMPUTED_AT_RUNTIME"
+    },
+    "expectedOutput": {
+        "isValid": "1"
+    },
+    "notes": {
+        "validFrom": "2024-01-01 00:00:00 UTC",
+        "validTo": "2025-01-01 00:00:00 UTC",
+        "currentTime": "2024-07-03 (within window)"
+    }
+}
