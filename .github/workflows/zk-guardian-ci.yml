@@ -40,7 +40,7 @@ jobs:
         working-directory: ./circuits
         run: |
           mkdir -p build
-          circom AccessIsAllowed.circom --r1cs --wasm --sym -o build -l ../node_modules
+          circom AccessIsAllowed.circom --r1cs --wasm --sym -o build -l ./node_modules
           
           # Mock Setup
           snarkjs powersoftau new bn128 12 build/pot12_0000.ptau -v
