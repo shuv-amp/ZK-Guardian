@@ -1,50 +1,110 @@
-# Welcome to your Expo app 👋
+# ZK Guardian 🛡️
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+> Privacy-preserving healthcare audit log using zk-SNARKs and HL7 FHIR R4
 
-## Get started
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Polygon Amoy](https://img.shields.io/badge/Polygon-Amoy-purple)](https://amoy.polygonscan.com/)
+[![FHIR R4](https://img.shields.io/badge/FHIR-R4-orange)](https://hl7.org/fhir/R4/)
 
-1. Install dependencies
+## 🎯 What is ZK Guardian?
 
-   ```bash
-   npm install
-   ```
+ZK Guardian solves a critical healthcare privacy problem: **How do you prove that a clinician accessed patient data with proper consent, without revealing WHO accessed WHAT?**
 
-2. Start the app
+Using zero-knowledge proofs (Groth16), we create cryptographic audit logs that:
+- ✅ Prove consent was valid at access time
+- ✅ Store nothing identifiable on-chain (zero PII/PHI)
+- ✅ Enable patients to see their access history
+- ✅ Support emergency break-glass access
+- ✅ Comply with HIPAA and GDPR
 
-   ```bash
-   npx expo start
-   ```
+## 📦 Project Structure
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+zk-guardian/
+├── apps/mobile/          # React Native (Expo) unified app
+├── gateway/              # Node.js + Express gateway
+├── circuits/             # Circom ZK circuits
+├── contracts/            # Solidity smart contracts
+├── fhir/                 # FHIR profiles & examples
+├── monitoring/           # Prometheus/Grafana stack
+└── docs/                 # Documentation
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## 🚀 Quick Start
 
-## Learn more
+### Prerequisites
 
-To learn more about developing your project with Expo, look at the following resources:
+- Node.js ≥20.0.0
+- pnpm ≥9.0.0
+- Circom 2.1.x ([install guide](https://docs.circom.io/getting-started/installation/))
+- Docker (optional, for local HAPI FHIR)
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### Installation
 
-## Join the community
+```bash
+# Clone repository
+git clone https://github.com/your-org/zk-guardian.git
+cd zk-guardian
 
-Join our community of developers creating universal apps.
+# Install dependencies
+pnpm install
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+# Copy environment template
+cp .env.example .env
+
+# Compile circuits (first run takes ~2 minutes)
+pnpm circuits:compile
+pnpm circuits:setup
+
+# Start development
+pnpm dev
+```
+
+### Running Individual Services
+
+```bash
+# Gateway only
+pnpm gateway:dev
+
+# Mobile app
+pnpm mobile:start
+
+# Smart contracts (compile & test)
+pnpm contracts:compile
+pnpm contracts:test
+```
+
+## 🏗️ Architecture
+
+```
+┌──────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Mobile App   │◄──►│  ZK Gateway      │◄──►│  HAPI FHIR      │
+│ (Expo)       │    │  (Node.js)       │    │  (Java)         │
+│              │    │                  │    │                 │
+│ • Consent    │    │ • SMART Auth     │    │ • Patient data  │
+│   approval   │    │ • ZK Proofs      │    │ • Consent       │
+│ • Audit view │    │ • Batch audit    │    │ • Observations  │
+└──────────────┘    └────────┬─────────┘    └─────────────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │  Polygon Amoy    │
+                    │                  │
+                    │ • ZKGuardianAudit│
+                    │ • Revocation     │
+                    │   Registry       │
+                    └──────────────────┘
+```
+
+## 🔐 Security
+
+- **Zero PII on-chain**: Only hashes and proofs
+- **Nullifier protection**: Prevents brute-force attacks
+- **HIPAA compliant**: Break-glass, audit trails, encryption
+- **SMART on FHIR**: OAuth 2.0 authentication
+
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+

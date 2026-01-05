@@ -1,0 +1,53 @@
+{
+    "expo": {
+        "name": "ZK Guardian",
+        "slug": "zk-guardian",
+        "version": "0.0.1",
+        "orientation": "portrait",
+        "icon": "./assets/icon.png",
+        "scheme": "zkguardian",
+        "userInterfaceStyle": "automatic",
+        "newArchEnabled": true,
+        "splash": {
+            "image": "./assets/splash-icon.png",
+            "resizeMode": "contain",
+            "backgroundColor": "#5B68DF"
+        },
+        "ios": {
+            "supportsTablet": true,
+            "bundleIdentifier": "com.zkguardian.app",
+            "infoPlist": {
+                "NSFaceIDUsageDescription": "ZK Guardian uses Face ID to securely approve consent requests",
+                "NSCameraUsageDescription": "Used to scan QR codes for device linking"
+            }
+        },
+        "android": {
+            "adaptiveIcon": {
+                "foregroundImage": "./assets/adaptive-icon.png",
+                "backgroundColor": "#5B68DF"
+            },
+            "package": "com.zkguardian.app",
+            "permissions": [
+                "USE_BIOMETRIC",
+                "USE_FINGERPRINT"
+            ]
+        },
+        "web": {
+            "bundler": "metro",
+            "output": "single"
+        },
+        "plugins": [
+            "expo-router",
+            "expo-secure-store",
+            [
+                "expo-local-authentication",
+                {
+                    "faceIDPermission": "Allow ZK Guardian to use Face ID for consent approval"
+                }
+            ]
+        ],
+        "experiments": {
+            "typedRoutes": true
+        }
+    }
+}
