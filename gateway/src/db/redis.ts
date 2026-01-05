@@ -22,7 +22,8 @@ export function getRedis() {
         redisClient = new RedisClient(url, {
             maxRetriesPerRequest: 3,
             enableReadyCheck: true,
-            lazyConnect: true
+            lazyConnect: true,
+            tls: url.startsWith('rediss://') || process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined
         });
 
         redisClient.on('connect', () => {
