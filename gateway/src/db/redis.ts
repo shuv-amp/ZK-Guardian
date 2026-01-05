@@ -24,7 +24,7 @@ export function getRedis() {
             enableReadyCheck: true,
             lazyConnect: true,
             family: 0,
-            tls: url.startsWith('rediss://') || process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined
+            tls: url.startsWith('rediss://') ? { rejectUnauthorized: false } : undefined
         });
 
         redisClient.on('connect', () => {

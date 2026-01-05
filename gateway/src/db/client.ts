@@ -24,6 +24,7 @@ function createClient(): GeneratedPrismaClient {
     // Create a connection pool
     const pool = new Pool({
         connectionString,
+        ssl: env.NODE_ENV === 'production' && connectionString?.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
         max: 10, // Default pool size
         idleTimeoutMillis: 30000
     });
