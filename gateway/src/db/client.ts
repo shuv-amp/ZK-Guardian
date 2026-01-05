@@ -16,7 +16,10 @@ export type PrismaClient = GeneratedPrismaClient;
 let prismaInstance: GeneratedPrismaClient | null = null;
 
 function createClient(): GeneratedPrismaClient {
-    const connectionString = env.DATABASE_URL;
+    let connectionString = env.DATABASE_URL;
+    if (connectionString && !connectionString.includes('sslmode=')) {
+        connectionString += (connectionString.includes('?') ? '&' : '?') + 'sslmode=require';
+    }
 
     // Create a connection pool
     const pool = new Pool({
