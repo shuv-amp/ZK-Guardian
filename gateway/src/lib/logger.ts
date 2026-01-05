@@ -72,7 +72,7 @@ export function logSecurityEvent(data: {
  * Log a system event
  */
 export function logSystemEvent(data: {
-    event: 'STARTUP' | 'SHUTDOWN' | 'DB_CONNECTED' | 'REDIS_CONNECTED' | 'BATCH_FLUSH';
+    event: 'STARTUP' | 'SHUTDOWN' | 'DB_CONNECTED' | 'REDIS_CONNECTED' | 'BATCH_FLUSH' | 'CIRCUIT_VERIFIED';
     details?: string;
 }) {
     logger.info(data, `[SYSTEM] ${data.event}`);

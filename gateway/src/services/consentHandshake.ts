@@ -64,7 +64,7 @@ export class ConsentHandshakeService {
             // Subscribe to consent channel for cross-instance coordination
             await this.subscriber.subscribe(REDIS_PUBSUB_CHANNEL, (err: Error | null) => {
                 if (err) {
-                    logger.error('Failed to subscribe to consent channel', { error: err.message });
+                    logger.error({ error: err.message }, 'Failed to subscribe to consent channel');
                 }
             });
 
@@ -74,12 +74,12 @@ export class ConsentHandshakeService {
                 }
             });
 
-            logger.info('ConsentHandshake service initialized with Redis pub/sub', {
+            logger.info({
                 instanceId: INSTANCE_ID
-            });
+            }, 'ConsentHandshake service initialized with Redis pub/sub');
             this.initialized = true;
         } catch (error: any) {
-            logger.error('Failed to initialize ConsentHandshake pub/sub', { error: error.message });
+            logger.error({ error: error.message }, 'Failed to initialize ConsentHandshake pub/sub');
             // Continue without pub/sub - single instance mode
             this.initialized = true;
         }
@@ -108,7 +108,7 @@ export class ConsentHandshakeService {
                 }
             }
         } catch (e) {
-            logger.error('Failed to handle pub/sub message', { error: (e as Error).message });
+            logger.error({ error: (e as Error).message }, 'Failed to handle pub/sub message');
         }
     }
 
@@ -117,7 +117,7 @@ export class ConsentHandshakeService {
      */
     private async forwardToLocalSockets(patientId: string, payload: string): Promise<void> {
         const sessionIds = await this.getLocalSessionsForPatient(patientId);
-        
+
         for (const sessionId of sessionIds) {
             const ws = this.localSockets.get(sessionId);
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -132,7 +132,7 @@ export class ConsentHandshakeService {
     private async getLocalSessionsForPatient(patientId: string): Promise<string[]> {
         const result: string[] = [];
         const redis = getRedis();
-        
+
         for (const [sessionId, ws] of this.localSockets.entries()) {
             try {
                 const sessionData = await redis.get(`${REDIS_SESSION_PREFIX}${sessionId}`);
@@ -147,7 +147,7 @@ export class ConsentHandshakeService {
                 this.localSockets.delete(sessionId);
             }
         }
-        
+
         return result;
     }
 
@@ -192,32 +192,32 @@ export class ConsentHandshakeService {
             await redis.sadd(`${REDIS_PATIENT_SESSIONS}${patientId}`, sessionId);
             await redis.expire(`${REDIS_PATIENT_SESSIONS}${patientId}`, SESSION_TTL_SECONDS);
         } catch (error: any) {
-            logger.error('Failed to store WebSocket session in Redis', { 
+            logger.error({
                 error: error.message,
                 patientId,
                 sessionId
-            });
+            }, 'Failed to store WebSocket session in Redis');
             // Continue anyway - worst case is reduced multi-instance support
         }
 
         // Store local reference
         this.localSockets.set(sessionId, ws);
 
-        logger.info('Patient WebSocket connected', {
+        logger.info({
             patientId,
             sessionId,
             instanceId: INSTANCE_ID
-        });
+        }, 'Patient WebSocket connected');
 
         ws.on('message', (message) => this.handleMessage(patientId, sessionId, message));
 
         ws.on('close', async () => {
-            logger.info('Patient WebSocket disconnected', { patientId, sessionId });
+            logger.info({ patientId, sessionId }, 'Patient WebSocket disconnected');
             await this.cleanupSession(sessionId, patientId);
         });
 
         ws.on('error', async (err) => {
-            logger.error('WebSocket error', { patientId, sessionId, error: err.message });
+            logger.error({ patientId, sessionId, error: err.message }, 'WebSocket error');
             await this.cleanupSession(sessionId, patientId);
         });
 
@@ -240,10 +240,10 @@ export class ConsentHandshakeService {
             await redis.del(`${REDIS_SESSION_PREFIX}${sessionId}`);
             await redis.srem(`${REDIS_PATIENT_SESSIONS}${patientId}`, sessionId);
         } catch (error: any) {
-            logger.warn('Failed to cleanup session from Redis', { 
+            logger.warn({
                 error: error.message,
-                sessionId 
-            });
+                sessionId
+            }, 'Failed to cleanup session from Redis');
         }
     }
 
@@ -259,13 +259,13 @@ export class ConsentHandshakeService {
 
             if (data.type === "CONSENT_RESPONSE" && data.requestId) {
                 const request = this.pendingRequests.get(data.requestId);
-                
-                logger.info('Received consent response', {
+
+                logger.info({
                     requestId: data.requestId,
                     approved: data.approved,
                     patientId,
                     sessionId
-                });
+                }, 'Received consent response');
 
                 if (request) {
                     // Local request - resolve directly
@@ -283,9 +283,9 @@ export class ConsentHandshakeService {
                             patientId
                         }));
                     } catch (e) {
-                        logger.warn('Failed to publish consent response to pub/sub', {
+                        logger.warn({
                             requestId: data.requestId
-                        });
+                        }, 'Failed to publish consent response to pub/sub');
                     }
                 }
             } else if (data.type === "HEARTBEAT") {
@@ -298,10 +298,10 @@ export class ConsentHandshakeService {
                 }
             }
         } catch (e) {
-            logger.error('Failed to parse WebSocket message', { 
+            logger.error({
                 error: (e as Error).message,
-                patientId 
-            });
+                patientId
+            }, 'Failed to parse WebSocket message');
         }
     }
 
@@ -312,7 +312,7 @@ export class ConsentHandshakeService {
         const redis = getRedis();
         try {
             const sessions = await redis.smembers(`${REDIS_PATIENT_SESSIONS}${patientId}`);
-            
+
             // Verify at least one session is still valid
             for (const sessionId of sessions) {
                 const sessionData = await redis.get(`${REDIS_SESSION_PREFIX}${sessionId}`);
@@ -322,10 +322,10 @@ export class ConsentHandshakeService {
                 // Clean up stale session reference
                 await redis.srem(`${REDIS_PATIENT_SESSIONS}${patientId}`, sessionId);
             }
-            
+
             return false;
         } catch (error) {
-            logger.warn('Failed to check patient online status', { patientId });
+            logger.warn({ patientId }, 'Failed to check patient online status');
             // Fall back to local check
             for (const [, ws] of this.localSockets.entries()) {
                 if (ws.readyState === WebSocket.OPEN) {
@@ -344,14 +344,14 @@ export class ConsentHandshakeService {
         try {
             const sessions = await redis.smembers(`${REDIS_PATIENT_SESSIONS}${patientId}`);
             let count = 0;
-            
+
             for (const sessionId of sessions) {
                 const sessionData = await redis.get(`${REDIS_SESSION_PREFIX}${sessionId}`);
                 if (sessionData) {
                     count++;
                 }
             }
-            
+
             return count;
         } catch (error) {
             return 0;
@@ -379,17 +379,17 @@ export class ConsentHandshakeService {
         // Check if patient has any active sessions
         const isOnline = await this.isPatientOnline(patientId);
         if (!isOnline) {
-            logger.info('No active device found for patient', { patientId });
+            logger.info({ patientId }, 'No active device found for patient');
             return false; // Patient offline
         }
 
         const requestId = uuidv4();
-        logger.info('Requesting real-time consent', {
+        logger.info({
             requestId,
             patientId,
             practitioner: requestDetails.practitioner,
             resourceType: requestDetails.resourceType
-        });
+        }, 'Requesting real-time consent');
 
         // Prepare payload
         const payload = JSON.stringify({
@@ -418,14 +418,14 @@ export class ConsentHandshakeService {
                 sourceInstance: INSTANCE_ID
             }));
         } catch (e) {
-            logger.warn('Failed to publish consent request to pub/sub', { requestId });
+            logger.warn({ requestId }, 'Failed to publish consent request to pub/sub');
         }
 
         // Return a promise that waits for response
         return new Promise<boolean>((resolve, reject) => {
             const timer = setTimeout(() => {
                 if (this.pendingRequests.has(requestId)) {
-                    logger.info('Consent request timed out', { requestId, patientId });
+                    logger.info({ requestId, patientId }, 'Consent request timed out');
                     this.pendingRequests.delete(requestId);
                     resolve(false); // Default to deny on timeout
                 }
@@ -439,7 +439,7 @@ export class ConsentHandshakeService {
      * Graceful shutdown - clean up all sessions for this instance
      */
     async shutdown(): Promise<void> {
-        logger.info('Shutting down ConsentHandshake service', { instanceId: INSTANCE_ID });
+        logger.info({ instanceId: INSTANCE_ID }, 'Shutting down ConsentHandshake service');
 
         const redis = getRedis();
         // Close all local sockets
@@ -470,7 +470,7 @@ export const consentHandshakeService = new ConsentHandshakeService();
 // Helper for index.ts to wire it up
 export const setupConsentWebSocket = async (wss: WebSocketServer): Promise<void> => {
     await consentHandshakeService.initialize();
-    
+
     wss.on('connection', (ws, req) => {
         consentHandshakeService.handleConnection(ws, req);
     });

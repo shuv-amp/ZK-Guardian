@@ -50,7 +50,7 @@ describe('FHIR Proxy Routes', () => {
 
         // Simulate Upstream SMART Context
         app.use((req, res, next) => {
-            req.smartContext = {
+            (req as any).smartContext = {
                 patient: "123",
                 practitioner: "practitioner-456"
             };
