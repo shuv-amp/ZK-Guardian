@@ -1,13 +1,1 @@
 FROM hapiproject/hapi:latest
-
-USER root
-COPY hapi-heroku-entrypoint.sh /hapi-heroku-entrypoint.sh
-RUN chmod +x /hapi-heroku-entrypoint.sh
-
-# Switch back to hapi user if possible, or stay root if needed for entrypoint permissions
-# Assuming base image uses a specific user, we might need to check. 
-# But usually sticking to root for Heroku is fine (it randomizes user anyway)
-# However, Heroku overrides USER directive.
-
-ENTRYPOINT ["/hapi-heroku-entrypoint.sh"]
-CMD ["java", "--class-path", "/app/main_resources:/app/classes:/app/libs/*", "ca.uhn.fhir.jpa.starter.Application"]
