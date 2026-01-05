@@ -16,19 +16,38 @@ declare module 'snarkjs' {
     };
 }
 
+// SMART on FHIR Context (per SMART App Launch spec)
+interface SMARTContext {
+    /** Subject identifier (user ID) */
+    sub: string;
+    /** Patient ID from launch context */
+    patient?: string;
+    /** Practitioner ID if clinician */
+    practitioner?: string;
+    /** Granted scopes */
+    scope: string;
+    /** Issuer URL */
+    iss: string;
+    /** Token expiration timestamp */
+    exp: number;
+    /** User's display name */
+    name?: string;
+    /** User's department (if available in claims) */
+    department?: string;
+    /** FHIR User reference */
+    fhirUser?: string;
+}
+
 // Extend Express Request
 declare namespace Express {
     export interface Request {
-        smartContext?: {
-            patient?: string;
-            practitioner?: string;
-            scope?: string;
-            sub?: string;
-        };
+        smartContext?: SMARTContext;
         zkAudit?: {
             proofHash: string;
             txHash: string;
             accessEventHash: string;
         };
+        requestId?: string;
+        logger?: import('pino').Logger;
     }
 }

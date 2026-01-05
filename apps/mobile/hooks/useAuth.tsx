@@ -1,15 +1,17 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { smartAuth, SMARTAuthService } from '../services/SMARTAuthService';
-import { consentClient, ConsentHandshakeClient } from '../services/ConsentHandshakeClient';
+import { smartAuth } from '../services/SMARTAuthService';
+import { consentClient } from '../services/ConsentHandshakeClient';
 
-interface AuthContextType {
+export interface AuthContextType {
     isAuthenticated: boolean;
     isLoading: boolean;
     patientId: string | null;
     practitionerId: string | null;
+    accessToken: string | null;
     login: () => Promise<boolean>;
     logout: () => Promise<void>;
     connectionState: 'disconnected' | 'connecting' | 'connected' | 'error';
+    getAccessToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -29,6 +31,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const [isLoading, setIsLoading] = useState(true);
     const [patientId, setPatientId] = useState<string | null>(null);
     const [practitionerId, setPractitionerId] = useState<string | null>(null);
+    const [accessToken, setAccessToken] = useState<string | null>(null);
     const [connectionState, setConnectionState] = useState<AuthContextType['connectionState']>('disconnected');
 
     // Initialize auth on mount
@@ -39,6 +42,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
                 setIsAuthenticated(true);
                 setPatientId(smartAuth.getPatientId());
                 setPractitionerId(smartAuth.getPractitionerId());
+
+                // Get access token
+                const token = await smartAuth.getAccessToken();
+                setAccessToken(token);
 
                 // Connect to WebSocket if patient
                 const pid = smartAuth.getPatientId();
@@ -70,6 +77,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
             setPatientId(pid);
             setPractitionerId(pracId);
 
+            // Get access token
+            const token = await smartAuth.getAccessToken();
+            setAccessToken(token);
+
             // Connect WebSocket for patients
             if (pid) {
                 consentClient.connect(pid);
@@ -86,6 +97,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setIsAuthenticated(false);
         setPatientId(null);
         setPractitionerId(null);
+        setAccessToken(null);
+    };
+
+    const getAccessToken = async (): Promise<string | null> => {
+        const token = await smartAuth.getAccessToken();
+        setAccessToken(token);
+        return token;
     };
 
     return (
@@ -95,9 +113,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
                 isLoading,
                 patientId,
                 practitionerId,
+                accessToken,
                 login,
                 logout,
                 connectionState,
+                getAccessToken,
             }}
         >
             {children}

@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from '../hooks/useAuth';
 import { ConsentModal } from '../components/ConsentModal';
 import { isBackendConfigured } from '../config/env';
 import { View, Text, StyleSheet } from 'react-native';
+import { COLORS, FONTS, SPACING } from '../constants/Theme';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -45,8 +46,11 @@ function RootNavigator() {
 
     return (
         <>
-            <StatusBar style="auto" />
-            <Stack screenOptions={{ headerShown: false }}>
+            <StatusBar style="dark" backgroundColor={COLORS.background} />
+            <Stack screenOptions={{ 
+                headerShown: false,
+                contentStyle: { backgroundColor: COLORS.background }
+            }}>
                 {/* Auth screens - shown when not authenticated */}
                 <Stack.Screen
                     name="(auth)"
@@ -129,20 +133,21 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        padding: 24,
-        backgroundColor: '#FFF',
+        padding: SPACING.xl,
+        backgroundColor: COLORS.background,
     },
     errorTitle: {
         fontSize: 24,
-        fontWeight: '700',
-        color: '#F44336',
-        marginBottom: 16,
+        ...FONTS.bold,
+        color: COLORS.error,
+        marginBottom: SPACING.m,
     },
     errorText: {
         fontSize: 16,
-        color: '#666',
+        color: COLORS.textSecondary,
         textAlign: 'center',
         lineHeight: 24,
+        ...FONTS.regular,
     },
 });
 

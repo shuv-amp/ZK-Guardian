@@ -119,9 +119,12 @@ export class SMARTAuthService {
     private async fetchSmartConfiguration(): Promise<any> {
         try {
             // The Gateway should expose a .well-known/smart-configuration endpoint
-            const response = await fetch(`${config.GATEWAY_URL}/.well-known/smart-configuration`);
+            const configUrl = `${config.GATEWAY_URL}/.well-known/smart-configuration`;
+            console.log(`[SMARTAuth] Fetching config from: ${configUrl}`);
+
+            const response = await fetch(configUrl);
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
+                throw new Error(`HTTP ${response.status} fetching ${configUrl}`);
             }
             return response.json();
         } catch (error) {

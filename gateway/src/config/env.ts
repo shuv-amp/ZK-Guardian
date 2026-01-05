@@ -1,46 +1,68 @@
 /**
- * Gateway Environment Configuration
- * Validated with Zod for type safety
+ * Environment Configuration
+ * 
+ * Validates environment variables at startup.
  */
 
 import { z } from 'zod';
 
 const envSchema = z.object({
     // Server
-    PORT: z.string().default('3000').transform(Number),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-
-    // FHIR
-    HAPI_FHIR_URL: z.string().url().default('http://localhost:8080/fhir'),
-
-    // Auth
-    JWT_SECRET: z.string().min(32),
-
-    // Consent
-    CONSENT_TIMEOUT_MS: z.string().default('60000').transform(Number),
-
-    // Blockchain
-    POLYGON_AMOY_RPC: z.string().url().default('https://rpc-amoy.polygon.technology'),
-    GATEWAY_PRIVATE_KEY: z.string().optional(),
-    AUDIT_CONTRACT_ADDRESS: z.string().optional(),
-    REVOCATION_CONTRACT_ADDRESS: z.string().optional(),
-
-    // Monitoring
-    PROMETHEUS_ENABLED: z.string().default('false').transform(v => v === 'true'),
+    PORT: z.coerce.number().default(3000),
+    npm_package_version: z.string().optional(),
 
     // CORS
-    CORS_ORIGINS: z.string().default('*').transform(v => v === '*' ? '*' : v.split(',')),
+    CORS_ORIGINS: z.string().transform(val =>
+        val === '*' ? '*' : val.split(',').map(s => s.trim())
+    ).default('*'),
+
+    // Database
+    DATABASE_URL: z.string().url().optional(),
+
+    // Redis
+    REDIS_URL: z.string().url().optional(),
+
+    // HAPI FHIR
+    HAPI_FHIR_URL: z.string().url().default('http://localhost:8080'),
+
+    // Blockchain
+    POLYGON_AMOY_RPC: z.string().url().optional(),
+    AUDIT_CONTRACT_ADDRESS: z.string().optional(),
+    GATEWAY_PRIVATE_KEY: z.string().optional(),
+
+    // SMART on FHIR
+    SMART_ISSUER: z.string().url().optional(),
+    SMART_CLIENT_ID: z.string().optional(),
+
+    // Logging
+    LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+
+    // Features
+    PROMETHEUS_ENABLED: z.coerce.boolean().default(true),
+    BATCH_INTERVAL_MS: z.coerce.number().default(300000), // 5 minutes
+    BATCH_SIZE: z.coerce.number().default(10)
 });
 
-// Parse and validate environment
-const parseResult = envSchema.safeParse(process.env);
+function loadEnv() {
+    const parsed = envSchema.safeParse(process.env);
 
-if (!parseResult.success) {
-    console.error('❌ Invalid environment configuration:');
-    console.error(parseResult.error.format());
-    process.exit(1);
+    if (!parsed.success) {
+        console.error('❌ Invalid environment configuration:');
+        parsed.error.issues.forEach(issue => {
+            console.error(`   - ${issue.path.join('.')}: ${issue.message}`);
+        });
+
+        if (process.env.NODE_ENV === 'production') {
+            process.exit(1);
+        }
+
+        // Return defaults in development
+        return envSchema.parse({});
+    }
+
+    return parsed.data;
 }
 
-export const env = parseResult.data;
-
+export const env = loadEnv();
 export type Env = z.infer<typeof envSchema>;

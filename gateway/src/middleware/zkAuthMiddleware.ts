@@ -2,9 +2,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { zkProofService, AccessRequest } from '../services/zkProofService.js';
 import { consentHandshakeService } from '../services/consentHandshake.js';
+import { replayProtection } from '../services/replayProtection.js';
 import axios from 'axios';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { logger } from '../lib/logger.js';
+import { accessRequestsCounter, consentDenialsCounter } from '../metrics/prometheus.js';
 
 const HAPI_FHIR_URL = process.env.HAPI_FHIR_URL || "http://localhost:8080/fhir";
 
@@ -118,13 +121,44 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
     };
 
     const performAudit = async (request: AccessRequest): Promise<void> => {
-        console.log(`[ZK Middleware] Initiating Audit for ${resourceType}/${resourceId}`);
+        logger.info({ resourceType, resourceId }, 'Initiating ZK Audit');
+        accessRequestsCounter.inc({ resource_type: resourceType, status: 'initiated' });
 
         // Generate Proof
         const proofResult = await zkProofService.generateAccessProof(request);
 
+        // CRITICAL: Check for replay attack BEFORE blockchain submission
+        const replayCheck = await replayProtection.checkAndReserve(proofResult.proofHash, {
+            accessEventHash: proofResult.publicSignals[2] || '',
+            patientId: request.patientId,
+            clinicianId: request.clinicianId,
+            resourceType: request.resourceType
+        });
+
+        if (!replayCheck.isNew) {
+            logger.warn({
+                proofHash: proofResult.proofHash,
+                existingEntry: replayCheck.existingEntry
+            }, 'Replay attack detected');
+            accessRequestsCounter.inc({ resource_type: resourceType, status: 'replay_detected' });
+
+            throw new Error('PROOF_ALREADY_USED');
+        }
+
         // Submit to Chain
-        const txInfo = await submitToBlockchain(proofResult);
+        let txInfo;
+        try {
+            txInfo = await submitToBlockchain(proofResult);
+            
+            // Mark proof as confirmed
+            await replayProtection.confirmProof(proofResult.proofHash, txInfo.txHash);
+            accessRequestsCounter.inc({ resource_type: resourceType, status: 'success' });
+        } catch (blockchainError: any) {
+            // Mark proof as failed so it can be retried
+            await replayProtection.markFailed(proofResult.proofHash, blockchainError.message);
+            accessRequestsCounter.inc({ resource_type: resourceType, status: 'blockchain_error' });
+            throw blockchainError;
+        }
 
         // Attach Receipt
         req.zkAudit = {
@@ -133,15 +167,22 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
             accessEventHash: proofResult.publicSignals[2]
         };
 
-        console.log(`[ZK Middleware] Audit Success. Tx: ${txInfo.txHash}`);
+        logger.info({ txHash: txInfo.txHash }, 'ZK Audit Success');
     };
 
     try {
         await performAudit(accessRequest);
         next();
     } catch (error: any) {
+        if (error.message === 'PROOF_ALREADY_USED') {
+            return res.status(400).json({
+                error: 'PROOF_ALREADY_USED',
+                message: 'Replay attack detected - this proof has already been submitted'
+            });
+        }
         if (error.message === 'NO_ACTIVE_CONSENT') {
-            console.log(`[ZK Middleware] Consent Missing. Triggering Handshake...`);
+            logger.info({ patientId: accessRequest.patientId }, 'No consent, triggering handshake');
+            accessRequestsCounter.inc({ resource_type: resourceType, status: 'consent_needed' });
 
             try {
                 // Trigger WebSocket Handshake
@@ -152,30 +193,40 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
                 });
 
                 if (granted) {
-                    console.log(`[ZK Middleware] Patient Approved. creating consent...`);
+                    logger.info({ patientId: accessRequest.patientId }, 'Patient approved, creating JIT consent');
                     await createJitConsent(accessRequest);
 
                     // Retry Audit
                     await performAudit(accessRequest);
                     return next();
                 } else {
+                    consentDenialsCounter.inc({ reason: 'user_denied' });
                     return res.status(403).json({
-                        error: "Access Denied: Patient refused consent.",
-                        code: "CONSENT_REFUSED"
+                        error: "CONSENT_DENIED",
+                        message: "Patient denied access request"
                     });
                 }
             } catch (handshakeError: any) {
-                console.error(`[ZK Middleware] Handshake/Retry Failed: ${handshakeError.message}`);
+                logger.error({ error: handshakeError.message }, 'Consent handshake failed');
+                consentDenialsCounter.inc({ reason: 'timeout_or_error' });
                 return res.status(403).json({
-                    error: "Access Denied: Consent handshake failed or timed out.",
-                    code: "CONSENT_TIMEOUT"
+                    error: "CONSENT_TIMEOUT",
+                    message: "Consent handshake failed or timed out"
                 });
             }
         } else if (error.message === 'FHIR_FETCH_FAILED') {
-            return res.status(502).json({ error: "Upstream FHIR Service Unavailable" });
+            accessRequestsCounter.inc({ resource_type: resourceType, status: 'fhir_error' });
+            return res.status(502).json({ 
+                error: "FHIR_UNAVAILABLE",
+                message: "Upstream FHIR Service Unavailable" 
+            });
         } else {
-            console.error(`[ZK Middleware] Unexpected Error: ${error.message}`);
-            return res.status(500).json({ error: "ZK Audit Generation Failed" });
+            logger.error({ error: error.message }, 'ZK Audit failed');
+            accessRequestsCounter.inc({ resource_type: resourceType, status: 'audit_failed' });
+            return res.status(500).json({ 
+                error: "AUDIT_FAILED",
+                message: "ZK Audit Generation Failed" 
+            });
         }
     }
 };

@@ -1,0 +1,34 @@
+# Prometheus Configuration for ZK Guardian
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+rule_files:
+  # - 'alerts.yml'
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ZK Guardian Gateway
+  - job_name: 'zk-guardian-gateway'
+    static_configs:
+      - targets: ['gateway:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # HAPI FHIR Server
+  - job_name: 'hapi-fhir'
+    static_configs:
+      - targets: ['hapi-fhir:8080']
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 30s
