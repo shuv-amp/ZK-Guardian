@@ -23,6 +23,7 @@ export function getRedis() {
             maxRetriesPerRequest: 3,
             enableReadyCheck: true,
             lazyConnect: true,
+            family: 0,
             tls: url.startsWith('rediss://') || process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined
         });
 
