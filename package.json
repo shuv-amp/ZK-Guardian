@@ -1,0 +1,32 @@
+{
+  "name": "zk-guardian",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Privacy-preserving healthcare audit log using zk-SNARKs and FHIR R4",
+  "license": "MIT",
+  "author": "ZK Guardian Team",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "circuits:compile": "pnpm --filter circuits compile",
+    "circuits:setup": "pnpm --filter circuits setup",
+    "contracts:compile": "pnpm --filter contracts compile",
+    "contracts:test": "pnpm --filter contracts test",
+    "contracts:deploy": "pnpm --filter contracts deploy:amoy",
+    "gateway:dev": "pnpm --filter gateway dev",
+    "mobile:start": "pnpm --filter mobile start",
+    "mobile:ios": "pnpm --filter mobile ios",
+    "mobile:android": "pnpm --filter mobile android"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0"
+  },
+  "packageManager": "pnpm@10.13.1",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
