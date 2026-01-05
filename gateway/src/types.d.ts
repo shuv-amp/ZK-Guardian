@@ -15,3 +15,20 @@ declare module 'snarkjs' {
         exportVerificationKey(zkeyName: string): Promise<any>;
     };
 }
+
+// Extend Express Request
+declare namespace Express {
+    export interface Request {
+        smartContext?: {
+            patient?: string;
+            practitioner?: string;
+            scope?: string;
+            sub?: string;
+        };
+        zkAudit?: {
+            proofHash: string;
+            txHash: string;
+            accessEventHash: string;
+        };
+    }
+}
