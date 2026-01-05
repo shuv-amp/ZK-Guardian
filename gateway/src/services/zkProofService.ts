@@ -20,7 +20,7 @@ import { batchQueueGauge, proofGenerationHistogram } from "../metrics/prometheus
 
 // In production, these should be environment variables or copied to build dir
 // For monorepo dev, we point to the siblings
-const CIRCUITS_BUILD_DIR = path.resolve(__dirname, "../../../circuits/build");
+const CIRCUITS_BUILD_DIR = path.resolve(__dirname, "../../circuits");
 const CIRCUIT_WASM = path.join(CIRCUITS_BUILD_DIR, "AccessIsAllowed_js/AccessIsAllowed.wasm");
 const CIRCUIT_ZKEY = path.join(CIRCUITS_BUILD_DIR, "AccessIsAllowed_final.zkey");
 const VERIFICATION_KEY = path.join(CIRCUITS_BUILD_DIR, "verification_key.json");
