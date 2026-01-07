@@ -17,14 +17,14 @@ let prismaInstance: GeneratedPrismaClient | null = null;
 
 function createClient(): GeneratedPrismaClient {
     let connectionString = env.DATABASE_URL;
-    if (connectionString && !connectionString.includes('sslmode=')) {
+    if (env.NODE_ENV === 'production' && connectionString && !connectionString.includes('sslmode=')) {
         connectionString += (connectionString.includes('?') ? '&' : '?') + 'sslmode=require';
     }
 
     // Create a connection pool
     const pool = new Pool({
         connectionString,
-        ssl: env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+        ssl: env.NODE_ENV === 'production' && connectionString?.includes('sslmode=require'),
         max: 10, // Default pool size
         idleTimeoutMillis: 30000
     });

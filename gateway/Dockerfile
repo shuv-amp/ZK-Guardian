@@ -3,18 +3,21 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
-COPY pnpm-lock.yaml* ./
+COPY gateway/package*.json ./
+COPY gateway/pnpm-lock.yaml* ./
 
 # Install pnpm and dependencies
-RUN npm install -g pnpm
-RUN pnpm install --frozen-lockfile
+# Install dependencies using npm (more robust for Prisma in Docker)
+RUN npm install
 
 # Copy source
-COPY . .
+COPY gateway .
+
+# Copy contract artifacts for relative import resolution (../../../contracts/artifacts)
+COPY contracts/artifacts /contracts/artifacts
 
 # Build TypeScript
-RUN pnpm build
+RUN npx prisma generate && npx tsc
 
 # Production stage
 FROM node:20-alpine
@@ -30,7 +33,7 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/pnpm-lock.yaml* ./
 
 # Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile
+RUN npm install --omit=dev
 
 # Set environment
 ENV NODE_ENV=production

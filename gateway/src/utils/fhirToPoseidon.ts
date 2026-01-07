@@ -55,6 +55,8 @@ export interface CircuitInputs {
     allowedResourceCategories: string[];
     validFromTimestamp: string;
     validToTimestamp: string;
+    patientNullifier: string;
+    sessionNonce: string;
 
     // Public Inputs
     proofOfPolicyMatch: string;
@@ -269,13 +271,17 @@ export async function prepareCircuitInputs({
     patientId,
     clinicianId,
     resourceId,
-    timestamp
+    timestamp,
+    patientNullifier,
+    sessionNonce
 }: {
     consent: FhirConsent;
     patientId: string;
     clinicianId: string;
     resourceId: string;
     timestamp: number;
+    patientNullifier: string;
+    sessionNonce: string;
 }): Promise<CircuitInputs> {
     const { poseidon, F } = await initPoseidon();
 
@@ -313,11 +319,13 @@ export async function prepareCircuitInputs({
         BigInt(validTo)
     ]));
 
-    // accessEventHash (binding)
+    // accessEventHash (binding) updated for AccessIsAllowedSecure (Poseidon(10))
+    // Include sessionNonce to bind proof to this specific session
     const accessEventHash = F.toString(poseidon([
         BigInt(patientFields[0]), BigInt(patientFields[1]), BigInt(patientFields[2]), BigInt(patientFields[3]),
         BigInt(resourceFields[0]), BigInt(resourceFields[1]), BigInt(resourceFields[2]), BigInt(resourceFields[3]),
-        BigInt(timestamp)
+        BigInt(timestamp),
+        BigInt(sessionNonce)
     ]));
 
     return {
@@ -329,6 +337,8 @@ export async function prepareCircuitInputs({
         allowedResourceCategories: allowedCategories,
         validFromTimestamp: String(validFrom),
         validToTimestamp: String(validTo),
+        patientNullifier,
+        sessionNonce,
 
         // Public
         proofOfPolicyMatch: policyMatchHash,

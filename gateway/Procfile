@@ -1,0 +1,3 @@
+web: node dist/index.js
+worker: node dist/workers/batchProcessor.js
+release: npx prisma migrate deploy

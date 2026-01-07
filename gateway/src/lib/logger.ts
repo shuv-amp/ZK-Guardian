@@ -32,9 +32,7 @@ export const logger = pino({
     }
 });
 
-// ============================================
 // Specialized Loggers
-// ============================================
 
 /**
  * Audit logger for HIPAA compliance

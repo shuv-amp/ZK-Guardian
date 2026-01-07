@@ -17,9 +17,7 @@ import { createRemoteJWKSet, jwtVerify, JWTPayload, JWTVerifyResult } from 'jose
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 
-// ============================================
 // Types
-// ============================================
 
 export interface SMARTContext {
     /** Subject identifier (user ID) */
@@ -42,9 +40,7 @@ export interface SMARTContext {
     fhirUser?: string;
 }
 
-// ============================================
 // JWKS Cache (Simple Map with TTL)
-// ============================================
 
 interface CachedJWKS {
     jwks: ReturnType<typeof createRemoteJWKSet>;
@@ -78,9 +74,7 @@ function getJWKS(issuer: string): ReturnType<typeof createRemoteJWKSet> {
     return jwks;
 }
 
-// ============================================
 // Token Validation
-// ============================================
 
 /**
  * Validates a SMART on FHIR access token
@@ -156,9 +150,7 @@ async function validateToken(token: string): Promise<SMARTContext> {
     return smartContext;
 }
 
-// ============================================
 // Scope Validation
-// ============================================
 
 /**
  * Check if the token has required scope
@@ -210,9 +202,7 @@ function getRequiredScope(req: Request): string | null {
     return `patient/${resourceType}.${action}`;
 }
 
-// ============================================
 // Middleware
-// ============================================
 
 /**
  * Custom error class for token validation

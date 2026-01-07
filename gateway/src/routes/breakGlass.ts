@@ -30,18 +30,14 @@ const REVOCATION_REGISTRY_ABI = [
     'event BreakGlassAccess(bytes32 indexed patientHash, bytes32 indexed clinicianHash, bytes32 reasonHash, uint256 timestamp)'
 ];
 
-// ============================================
 // Schemas
-// ============================================
 
 const CloseBreakGlassSchema = z.object({
     closureNotes: z.string().max(1000).optional(),
     accessedResources: z.array(z.string().max(256)).optional()
 });
 
-// ============================================
 // POST /api/break-glass/:patientId
-// ============================================
 
 breakGlassRouter.post(
     '/:patientId',
@@ -189,9 +185,7 @@ breakGlassRouter.post(
     }
 );
 
-// ============================================
 // GET /api/break-glass/:patientId/status
-// ============================================
 
 breakGlassRouter.get(
     '/:patientId/status',
@@ -253,9 +247,7 @@ breakGlassRouter.get(
     }
 );
 
-// ============================================
 // POST /api/break-glass/:patientId/close
-// ============================================
 
 breakGlassRouter.post(
     '/:patientId/close',
@@ -331,9 +323,7 @@ breakGlassRouter.post(
     }
 );
 
-// ============================================
 // Helper Functions
-// ============================================
 
 async function logBreakGlassToBlockchain(
     patientHash: string,

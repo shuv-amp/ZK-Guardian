@@ -20,6 +20,7 @@ import { consentsRouter } from './routes/consents.js';
 import { breakGlassRouter } from './routes/breakGlass.js';
 import { clinicianRouter } from './routes/clinician.js';
 import { smartConfigRouter } from './routes/smartConfig.js';
+import { oauthRouter } from './routes/oauth.js';
 import { smartAuthMiddleware } from './middleware/smartAuth.js';
 import { breakGlassMiddleware } from './middleware/breakGlass.js';
 import { rateLimitMiddleware } from './middleware/rateLimit.js';
@@ -32,9 +33,7 @@ import { isAppError, toErrorResponse } from './lib/errors.js';
 const app: Express = express();
 const server = createServer(app);
 
-// ============================================
 // Security & Parsing Middleware
-// ============================================
 
 app.use(helmet({
     contentSecurityPolicy: env.NODE_ENV === 'production',
@@ -50,9 +49,7 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 
-// ============================================
 // Request ID Middleware
-// ============================================
 
 app.use((req: Request, res: Response, next: NextFunction) => {
     const requestId = req.headers['x-request-id'] as string || randomUUID();
@@ -62,24 +59,20 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     next();
 });
 
-// ============================================
 // Rate Limiting (all routes)
-// ============================================
 
 app.use(rateLimitMiddleware);
 
-// ============================================
 // Health & Metrics (no auth)
-// ============================================
 
 app.use('/health', healthRouter);
 app.use('/ready', healthRouter);
 app.use('/metrics', metricsRouter);
 app.use('/.well-known', smartConfigRouter);
+console.log('[DEBUG] Mounting OAuth Routes at /oauth');
+app.use('/oauth', oauthRouter);
 
-// ============================================
 // Authenticated Routes
-// ============================================
 
 // FHIR proxy with SMART auth + break-glass
 app.use('/fhir', smartAuthMiddleware, breakGlassMiddleware, fhirRouter);
@@ -96,24 +89,18 @@ app.use('/api/clinician', smartAuthMiddleware, clinicianRouter);
 // Break-glass emergency access
 app.use('/api/break-glass', smartAuthMiddleware, breakGlassRouter);
 
-// ============================================
 // WebSocket for Consent Handshake
-// ============================================
 
 const wss = new WebSocketServer({ server, path: '/ws/consent' });
 setupConsentWebSocket(wss);
 
-// ============================================
 // 404 Handler
-// ============================================
 
 app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: 'NOT_FOUND', message: 'Route not found' });
 });
 
-// ============================================
 // Error Handler
-// ============================================
 
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     const requestId = (req as any).requestId || 'unknown';
@@ -130,9 +117,7 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     res.status(response.statusCode).json(response);
 });
 
-// ============================================
 // Startup
-// ============================================
 
 async function startup(): Promise<void> {
     try {
@@ -174,7 +159,7 @@ async function startup(): Promise<void> {
         batchAuditService.start();
 
         // Start HTTP server
-        server.listen(env.PORT, () => {
+        server.listen(env.PORT, '0.0.0.0', () => {
             logger.info({
                 port: env.PORT,
                 environment: env.NODE_ENV,
@@ -202,9 +187,7 @@ async function startup(): Promise<void> {
     }
 }
 
-// ============================================
 // Graceful Shutdown
-// ============================================
 
 async function shutdown(signal: string): Promise<void> {
     logger.info({ signal }, 'Shutdown signal received');

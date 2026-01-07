@@ -21,9 +21,7 @@ import { env } from './env.js';
 
 const scryptAsync = promisify(scrypt);
 
-// ============================================
 // Types
-// ============================================
 
 export type SecretType = 
     | 'GATEWAY_PRIVATE_KEY'
@@ -44,9 +42,7 @@ interface CachedSecret {
     fetchedAt: Date;
 }
 
-// ============================================
 // Secrets Manager Implementation
-// ============================================
 
 class SecretsManager {
     private cache: Map<SecretType, CachedSecret> = new Map();
@@ -174,9 +170,7 @@ class SecretsManager {
         logger.info('Secrets cache cleared');
     }
 
-    // ============================================
     // Private Methods
-    // ============================================
 
     /**
      * Fetch secret from backend
@@ -275,9 +269,7 @@ class SecretsManager {
     }
 }
 
-// ============================================
 // Errors
-// ============================================
 
 export class SecretNotFoundError extends Error {
     constructor(public readonly secretType: SecretType) {
@@ -286,9 +278,7 @@ export class SecretNotFoundError extends Error {
     }
 }
 
-// ============================================
 // Singleton Export
-// ============================================
 
 export const secretsManager = new SecretsManager();
 

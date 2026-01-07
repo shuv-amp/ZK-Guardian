@@ -4,10 +4,17 @@ import { IncomingMessage } from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import { getRedis } from '../db/redis.js';
 import { logger } from '../lib/logger.js';
+import { env } from '../config/env.js';
 import Redis from 'ioredis';
 
+interface ConsentResponse {
+    approved: boolean;
+    nullifier?: string;
+    sessionNonce?: string;
+}
+
 interface PendingRequest {
-    resolve: (granted: boolean) => void;
+    resolve: (response: ConsentResponse) => void;
     reject: (reason: any) => void;
     timer: NodeJS.Timeout;
 }
@@ -52,7 +59,7 @@ export class ConsentHandshakeService {
 
         try {
             // Create dedicated subscriber connection (Redis requirement for pub/sub)
-            const url = process.env.REDIS_URL || 'redis://localhost:6379';
+            const url = env.REDIS_URL || 'redis://localhost:6379';
             this.subscriber = new RedisClient(url, {
                 maxRetriesPerRequest: 3,
                 enableReadyCheck: true,
@@ -103,7 +110,12 @@ export class ConsentHandshakeService {
                 const pending = this.pendingRequests.get(data.requestId);
                 if (pending) {
                     clearTimeout(pending.timer);
-                    pending.resolve(!!data.approved);
+                    // Pass full response object
+                    pending.resolve({
+                        approved: !!data.approved,
+                        nullifier: data.payload?.nullifier,
+                        sessionNonce: data.payload?.sessionNonce
+                    });
                     this.pendingRequests.delete(data.requestId);
                 }
             }
@@ -270,7 +282,11 @@ export class ConsentHandshakeService {
                 if (request) {
                     // Local request - resolve directly
                     clearTimeout(request.timer);
-                    request.resolve(!!data.approved);
+                    request.resolve({
+                        approved: !!data.approved,
+                        nullifier: data.payload?.nullifier,
+                        sessionNonce: data.payload?.sessionNonce
+                    });
                     this.pendingRequests.delete(data.requestId);
                 } else {
                     // Request might be on another instance - publish response
@@ -371,7 +387,7 @@ export class ConsentHandshakeService {
             resourceId: string
         },
         timeoutMs = 30000 // 30 second default timeout
-    ): Promise<boolean> {
+    ): Promise<ConsentResponse> {
         if (!this.initialized) {
             await this.initialize();
         }
@@ -380,7 +396,7 @@ export class ConsentHandshakeService {
         const isOnline = await this.isPatientOnline(patientId);
         if (!isOnline) {
             logger.info({ patientId }, 'No active device found for patient');
-            return false; // Patient offline
+            return { approved: false }; // Patient offline
         }
 
         const requestId = uuidv4();
@@ -422,12 +438,12 @@ export class ConsentHandshakeService {
         }
 
         // Return a promise that waits for response
-        return new Promise<boolean>((resolve, reject) => {
+        return new Promise<ConsentResponse>((resolve, reject) => {
             const timer = setTimeout(() => {
                 if (this.pendingRequests.has(requestId)) {
                     logger.info({ requestId, patientId }, 'Consent request timed out');
                     this.pendingRequests.delete(requestId);
-                    resolve(false); // Default to deny on timeout
+                    resolve({ approved: false }); // Default to deny on timeout
                 }
             }, timeoutMs);
 

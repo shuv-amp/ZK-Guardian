@@ -24,9 +24,7 @@ export abstract class AppError extends Error {
     }
 }
 
-// ============================================
 // Authentication Errors
-// ============================================
 
 export class AuthenticationError extends AppError {
     readonly code = 'AUTHENTICATION_FAILED';
@@ -43,9 +41,7 @@ export class TokenExpiredError extends AppError {
     readonly statusCode = 401;
 }
 
-// ============================================
 // Consent Errors
-// ============================================
 
 export class ConsentDeniedError extends AppError {
     readonly code = 'CONSENT_DENIED';
@@ -69,9 +65,7 @@ export class ConsentTimeoutError extends AppError {
     readonly statusCode = 408;
 }
 
-// ============================================
 // ZK Proof Errors
-// ============================================
 
 export class ProofGenerationError extends AppError {
     readonly code = 'PROOF_GENERATION_FAILED';
@@ -83,9 +77,7 @@ export class ProofVerificationError extends AppError {
     readonly statusCode = 400;
 }
 
-// ============================================
 // Break-Glass Errors
-// ============================================
 
 export class BreakGlassInvalidError extends AppError {
     readonly code = 'INVALID_BREAK_GLASS';
@@ -97,9 +89,7 @@ export class BreakGlassExpiredError extends AppError {
     readonly statusCode = 403;
 }
 
-// ============================================
 // Resource Errors
-// ============================================
 
 export class ResourceNotFoundError extends AppError {
     readonly code = 'RESOURCE_NOT_FOUND';
@@ -119,9 +109,7 @@ export class ResourceCategoryNotAllowedError extends AppError {
     }
 }
 
-// ============================================
 // Validation Errors
-// ============================================
 
 export class ValidationError extends AppError {
     readonly code = 'VALIDATION_ERROR';
@@ -142,9 +130,7 @@ export class ValidationError extends AppError {
     }
 }
 
-// ============================================
 // Rate Limit Errors
-// ============================================
 
 export class RateLimitError extends AppError {
     readonly code = 'RATE_LIMIT_EXCEEDED';
@@ -164,9 +150,7 @@ export class RateLimitError extends AppError {
     }
 }
 
-// ============================================
 // Database Errors
-// ============================================
 
 export class DatabaseError extends AppError {
     readonly code = 'DATABASE_ERROR';
@@ -180,9 +164,7 @@ export class ConnectionError extends AppError {
     readonly isOperational = false;
 }
 
-// ============================================
 // Error Handler Helper
-// ============================================
 
 export function isAppError(error: unknown): error is AppError {
     return error instanceof AppError;

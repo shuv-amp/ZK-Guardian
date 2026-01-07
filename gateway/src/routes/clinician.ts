@@ -7,9 +7,7 @@ import { z } from 'zod';
 
 export const clinicianRouter: Router = Router();
 
-// ============================================
 // GET /api/clinician/:clinicianId/proofs
-// ============================================
 
 const ClinicianProofsQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(100).default(50),
