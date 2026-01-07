@@ -16,9 +16,10 @@ const mockSnarkJS = {
     groth16: {
         fullProve: vi.fn().mockResolvedValue({
             proof: { pi_a: [], pi_b: [], pi_c: [], protocol: "groth16", curve: "bn128" },
-            publicSignals: ["12345", "1677721600", "54321"] // [proofOfPolicyMatch, timestamp, accessEventHash]
+            // Public signals: [proofOfPolicyMatch, currentTimestamp, accessEventHash, isValid, blindedPatientId, blindedAccessHash, nullifierHash]
+            publicSignals: ["12345", "1677721600", "54321", "1", "999", "888", "777"]
         }),
-        exportSolidityCallData: vi.fn().mockResolvedValue('["0x1"], [["0x2"]], ["0x3"], ["0xPolicy", "0xTime", "0xEvent"]')
+        exportSolidityCallData: vi.fn().mockResolvedValue('["0x1"], [["0x2"]], ["0x3"], ["0xPolicy", "0xTime", "0xEvent", "0xValid", "0xBlindedId", "0xBlindedAccess", "0xNullifier"]')
     }
 };
 
@@ -59,7 +60,9 @@ describe('ZKProofService Integration', () => {
             patientId: "123",
             clinicianId: "practitioner-456",
             resourceId: "http://hl7.org/fhir/resource-types/Observation", // Must match consent class for Phase 1 circuit
-            resourceType: "Observation"
+            resourceType: "Observation",
+            patientNullifier: "1234567890",
+            sessionNonce: "987654321"
         };
 
         // 3. Generate Proof (Mocked)
@@ -69,7 +72,8 @@ describe('ZKProofService Integration', () => {
         expect(result).toBeDefined();
         expect(result.proof).toBeDefined();
         expect(result.publicSignals).toBeDefined();
-        expect(result.publicSignals.length).toBe(3); // [proofOfPolicyMatch, currentTimestamp, accessEventHash]
+        // AccessIsAllowedSecure has 7 public signals (inputs + outputs)
+        expect(result.publicSignals.length).toBe(7);
 
         console.log("Proof generated successfully (Mocked):");
         console.log("Public Signals:", result.publicSignals);

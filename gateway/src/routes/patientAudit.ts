@@ -13,9 +13,7 @@ import { validateQuery, validateParams, validateBody, PatientParamsSchema, Patie
 
 export const patientAuditRouter: Router = Router();
 
-// ============================================
 // Types
-// ============================================
 
 interface AccessRecord {
     id: string;
@@ -32,9 +30,7 @@ interface AccessRecord {
     isVerifiedOnChain: boolean;
 }
 
-// ============================================
 // GET /api/patient/:patientId/access-history
-// ============================================
 
 patientAuditRouter.get(
     '/:patientId/access-history',
@@ -116,9 +112,7 @@ patientAuditRouter.get(
     }
 });
 
-// ============================================
 // GET /api/patient/:patientId/access-alerts
-// ============================================
 
 patientAuditRouter.get(
     '/:patientId/access-alerts',
@@ -180,9 +174,7 @@ patientAuditRouter.get(
     }
 });
 
-// ============================================
 // POST /api/patient/:patientId/access-alerts/:alertId/acknowledge
-// ============================================
 
 patientAuditRouter.post(
     '/:patientId/access-alerts/:alertId/acknowledge',
@@ -226,9 +218,7 @@ patientAuditRouter.post(
     }
 });
 
-// ============================================
 // Helper: Record Access Event
-// ============================================
 
 export async function recordAccessEvent(data: {
     patientId: string;
@@ -269,9 +259,7 @@ export async function recordAccessEvent(data: {
     return record.id;
 }
 
-// ============================================
 // Helper: Create Alerts
-// ============================================
 
 async function checkAndCreateAlerts(auditLogId: string, data: {
     patientId: string;

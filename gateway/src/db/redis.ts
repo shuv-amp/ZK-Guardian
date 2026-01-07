@@ -1,6 +1,8 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import Redis from 'ioredis';
 
+import { env } from '../config/env.js';
+
 /**
  * Redis Client
  * 
@@ -17,13 +19,13 @@ let redisClient: InstanceType<typeof RedisClient> | null = null;
 
 export function getRedis() {
     if (!redisClient) {
-        const url = process.env.REDIS_URL || 'redis://localhost:6379';
+        // Use sanitized URL from env config
+        const url = env.REDIS_URL || 'redis://localhost:6379';
 
         redisClient = new RedisClient(url, {
             maxRetriesPerRequest: 3,
             enableReadyCheck: true,
             lazyConnect: true,
-            family: 0,
             tls: url.startsWith('rediss://') ? { rejectUnauthorized: false } : undefined
         });
 
@@ -68,9 +70,7 @@ export async function disconnectRedis(): Promise<void> {
     }
 }
 
-// ============================================
 // Rate Limiting Helpers
-// ============================================
 
 interface RateLimitResult {
     allowed: boolean;
@@ -100,9 +100,7 @@ export async function checkRateLimit(
     };
 }
 
-// ============================================
 // Batch Queue Helpers
-// ============================================
 
 export async function enqueueBatchProof(proof: object): Promise<number> {
     const redis = getRedis();

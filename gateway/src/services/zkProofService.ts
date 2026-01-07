@@ -20,10 +20,11 @@ import { batchQueueGauge, proofGenerationHistogram } from "../metrics/prometheus
 
 // In production, these should be environment variables or copied to build dir
 // For monorepo dev, we point to the siblings
-const CIRCUITS_BUILD_DIR = path.resolve(__dirname, "../../circuits");
-const CIRCUIT_WASM = path.join(CIRCUITS_BUILD_DIR, "AccessIsAllowed_js/AccessIsAllowed.wasm");
-const CIRCUIT_ZKEY = path.join(CIRCUITS_BUILD_DIR, "AccessIsAllowed_final.zkey");
-const VERIFICATION_KEY = path.join(CIRCUITS_BUILD_DIR, "verification_key.json");
+const CIRCUITS_BUILD_DIR = path.resolve(__dirname, "../../../circuits/build");
+const SECURE_CIRCUIT_DIR = path.join(CIRCUITS_BUILD_DIR, "AccessIsAllowedSecure");
+const CIRCUIT_WASM = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_js/AccessIsAllowedSecure.wasm");
+const CIRCUIT_ZKEY = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_final.zkey");
+const VERIFICATION_KEY = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_verification_key.json");
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || "http://localhost:8080/fhir";
 
@@ -35,6 +36,8 @@ export interface AccessRequest {
     clinicianId: string;
     resourceId: string;
     resourceType: string;
+    patientNullifier: string;
+    sessionNonce: string;
 }
 
 export interface ProofResult {
@@ -82,7 +85,14 @@ class ZKProofService {
     async generateAccessProof(request: AccessRequest): Promise<ProofResult> {
         if (!this.initialized) await this.initialize();
 
-        const { patientId, clinicianId, resourceId, resourceType } = request;
+        const {
+            patientId,
+            clinicianId,
+            resourceId,
+            resourceType,
+            patientNullifier,
+            sessionNonce
+        } = request;
 
         // 1. Fetch Consent
         const consent = await this.fetchActiveConsent(patientId);
@@ -102,7 +112,9 @@ class ZKProofService {
             patientId,
             clinicianId,
             resourceId: resourceId, // or `${resourceType}/${resourceId}`? Let's stay flexible
-            timestamp: currentTimestamp
+            timestamp: currentTimestamp,
+            patientNullifier,
+            sessionNonce
         });
 
         logger.info({
