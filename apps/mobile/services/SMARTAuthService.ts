@@ -139,19 +139,42 @@ export class SMARTAuthService {
         codeVerifier: string
     ): Promise<boolean> {
         try {
-            const response = await AuthSession.exchangeCodeAsync(
-                {
-                    clientId: 'zk-guardian-mobile',
-                    code,
-                    redirectUri,
-                    extraParams: {
-                        code_verifier: codeVerifier,
-                    },
-                },
-                this.discoveryDocument!
-            );
+            // Use manual fetch instead of AuthSession.exchangeCodeAsync
+            // to capture custom SMART-on-FHIR fields (patient, practitioner)
+            const tokenUrl = this.discoveryDocument!.tokenEndpoint!;
 
-            return this.storeTokens(response as unknown as TokenResponse);
+            const body = new URLSearchParams({
+                grant_type: 'authorization_code',
+                code,
+                redirect_uri: redirectUri,
+                client_id: 'zk-guardian-mobile',
+                code_verifier: codeVerifier,
+            });
+
+            console.log('[SMARTAuth] Exchanging code for tokens at:', tokenUrl);
+
+            const response = await fetch(tokenUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: body.toString(),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[SMARTAuth] Token exchange failed:', response.status, errorText);
+                return false;
+            }
+
+            const tokenResponse = await response.json();
+            console.log('[SMARTAuth] Token response received:', {
+                hasAccessToken: !!tokenResponse.access_token,
+                patient: tokenResponse.patient,
+                practitioner: tokenResponse.practitioner,
+            });
+
+            return this.storeTokens(tokenResponse as TokenResponse);
         } catch (error) {
             console.error('[SMARTAuth] Token exchange failed:', error);
             return false;
