@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, TextInput, StatusBar } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, StatusBar, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
@@ -11,36 +13,105 @@ import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
  * Interface for clinicians to request patient data access.
  */
 export default function ClinicianDashboard() {
-    const { practitionerId, logout } = useAuth();
+    const { practitionerId, logout, getAccessToken } = useAuth();
+    const router = useRouter();
     const [patientSearch, setPatientSearch] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [requestStatus, setRequestStatus] = useState<'idle' | 'loading' | 'waiting' | 'approved' | 'denied'>('idle');
+    const [statusMessage, setStatusMessage] = useState('');
+
+    // Track polling interval for cleanup
+    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Cleanup polling on unmount
+    useEffect(() => {
+        return () => {
+            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+            if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
+        };
+    }, []);
 
     const handleAccessRequest = async (resourceType: string) => {
         if (!patientSearch.trim()) return;
 
         setIsLoading(true);
+        setRequestStatus('loading');
+        setStatusMessage('Initiating Request...');
+
         try {
+            const token = await getAccessToken();
+            if (!token) {
+                setRequestStatus('denied');
+                setStatusMessage('Authentication Error - Please re-login');
+                setIsLoading(false);
+                return;
+            }
+
             const response = await fetch(`${config.GATEWAY_URL}/fhir/${resourceType}?patient=${patientSearch}`, {
                 headers: {
-                    'Authorization': `Bearer ${await getAccessToken()}`,
+                    'Authorization': `Bearer ${token}`,
                 },
             });
 
             if (response.ok) {
-                // Handle successful access
+                setRequestStatus('approved');
+                setStatusMessage('Access Granted - View Records');
                 console.log('Access granted');
             } else if (response.status === 403) {
-                // Handle consent required/denied
-                console.log('Consent required or denied');
+                // Handshake triggered
+                setRequestStatus('waiting');
+                setStatusMessage('Waiting for Patient Consent...');
+
+                // Poll for result
+                pollForConsent(resourceType, token);
+            } else if (response.status === 401) {
+                setRequestStatus('denied');
+                setStatusMessage('Session Expired - Please re-login');
+            } else {
+                setRequestStatus('denied');
+                setStatusMessage('Access Denied');
             }
         } catch (error) {
             console.error('Access request failed:', error);
+            setRequestStatus('denied');
+            setStatusMessage('Network Error - Check Connection');
         }
         setIsLoading(false);
     };
 
-    // Placeholder - would come from auth service
-    const getAccessToken = async () => 'mock-token';
+    const pollForConsent = async (resourceType: string, token: string | null) => {
+        // Clear any existing polling
+        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+        if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
+
+        pollingIntervalRef.current = setInterval(async () => {
+            try {
+                const currentToken = token || await getAccessToken();
+                if (!currentToken) return;
+
+                const response = await fetch(`${config.GATEWAY_URL}/fhir/${resourceType}?patient=${patientSearch}`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` },
+                });
+
+                if (response.ok) {
+                    if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+                    if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
+                    setRequestStatus('approved');
+                    setStatusMessage('Consent Received! Access Granted.');
+                }
+            } catch (e) {
+                // ignore errors while polling
+            }
+        }, 3000);
+
+        // Timeout after 60s
+        pollingTimeoutRef.current = setTimeout(() => {
+            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+            setRequestStatus('denied');
+            setStatusMessage('Request Timed Out - Patient did not respond');
+        }, 60000);
+    };
 
     return (
         <SafeAreaView style={styles.container}>
@@ -71,6 +142,21 @@ export default function ClinicianDashboard() {
                         />
                     </View>
                 </View>
+
+                {/* Status Indicator */}
+                {requestStatus !== 'idle' && (
+                    <View style={[styles.statusBanner,
+                    requestStatus === 'waiting' && styles.statusWaiting,
+                    requestStatus === 'loading' && styles.statusWaiting,
+                    requestStatus === 'approved' && styles.statusSuccess,
+                    requestStatus === 'denied' && styles.statusError
+                    ]}>
+                        <Text style={styles.statusBannerText}>{statusMessage}</Text>
+                        {(requestStatus === 'waiting' || requestStatus === 'loading') && (
+                            <ActivityIndicator size="small" color={COLORS.primary} style={{ marginLeft: 10 }} />
+                        )}
+                    </View>
+                )}
 
                 {/* Resource Access Buttons */}
                 <View style={styles.section}>
@@ -136,6 +222,39 @@ export default function ClinicianDashboard() {
                     <Text style={styles.complianceText}>
                         All access requests are logged on-chain using zero-knowledge proofs for HIPAA compliance.
                     </Text>
+                </View>
+
+                {/* Quick Actions */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Quick Actions</Text>
+                    <View style={styles.quickActions}>
+                        <TouchableOpacity
+                            style={styles.quickActionBtn}
+                            onPress={() => router.push('/(clinician)/records')}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="folder-open-outline" size={20} color={COLORS.primary} />
+                            <Text style={styles.quickActionText}>View Records</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={styles.quickActionBtn}
+                            onPress={() => router.push('/(clinician)/proofs')}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="checkmark-done-outline" size={20} color={COLORS.primary} />
+                            <Text style={styles.quickActionText}>Proof Status</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.quickActionBtn, styles.breakGlassBtn]}
+                            onPress={() => router.push('/(clinician)/break-glass')}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="flash-outline" size={20} color={COLORS.error} />
+                            <Text style={[styles.quickActionText, { color: COLORS.error }]}>Break-Glass</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </ScrollView>
         </SafeAreaView>
@@ -254,4 +373,58 @@ const styles = StyleSheet.create({
         lineHeight: 18,
         ...FONTS.regular,
     },
+    statusBanner: {
+        marginVertical: SPACING.m,
+        padding: SPACING.m,
+        borderRadius: RADIUS.m,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    statusWaiting: {
+        backgroundColor: COLORS.warningBg,
+        borderWidth: 1,
+        borderColor: COLORS.warning,
+    },
+    statusSuccess: {
+        backgroundColor: COLORS.successBg,
+        borderWidth: 1,
+        borderColor: COLORS.success,
+    },
+    statusError: {
+        backgroundColor: COLORS.errorBg,
+        borderWidth: 1,
+        borderColor: COLORS.error,
+    },
+    statusBannerText: {
+        ...FONTS.semibold,
+        fontSize: 14,
+        color: COLORS.text,
+    },
+    quickActions: {
+        flexDirection: 'row',
+        gap: SPACING.m,
+    },
+    quickActionBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.m,
+        padding: SPACING.m,
+        gap: SPACING.xs,
+        ...SHADOWS.small,
+    },
+    quickActionText: {
+        fontSize: 12,
+        ...FONTS.medium,
+        color: COLORS.primary,
+    },
+    breakGlassBtn: {
+        backgroundColor: COLORS.errorBg,
+        borderWidth: 1,
+        borderColor: COLORS.error,
+    },
+
 });

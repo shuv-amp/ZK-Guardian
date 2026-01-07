@@ -25,10 +25,18 @@ export function ConsentModal() {
     const [isProcessing, setIsProcessing] = useState(false);
 
     useEffect(() => {
-        // Register consent request handler
-        consentClient.onConsentRequest((req) => {
+        // Store callback reference for cleanup
+        const handleRequest = (req: ConsentRequest) => {
             setRequest(req);
-        });
+        };
+        
+        // Register consent request handler
+        consentClient.onConsentRequest(handleRequest);
+        
+        // Cleanup: clear the handler on unmount
+        return () => {
+            consentClient.onConsentRequest(null as any);
+        };
     }, []);
 
     const handleApprove = async () => {

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { smartAuth } from '../services/SMARTAuthService';
 import { consentClient } from '../services/ConsentHandshakeClient';
 
@@ -24,7 +24,8 @@ interface AuthProviderProps {
  * AuthProvider
  * 
  * Provides authentication state and methods to the app.
- * Automatically connects to WebSocket after successful login.
+ * Handles session restoration on app startup and WebSocket connection
+ * for real-time consent requests.
  */
 export function AuthProvider({ children }: AuthProviderProps) {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -34,76 +35,136 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const [accessToken, setAccessToken] = useState<string | null>(null);
     const [connectionState, setConnectionState] = useState<AuthContextType['connectionState']>('disconnected');
 
-    // Initialize auth on mount
+    // Track if WebSocket is connected to prevent duplicate connections
+    const wsConnectedRef = useRef(false);
+
+    // Initialize auth on mount - restore existing session if available
     useEffect(() => {
         const init = async () => {
-            const hasTokens = await smartAuth.initialize();
-            if (hasTokens) {
+            try {
+                const hasTokens = await smartAuth.initialize();
+
+                if (hasTokens) {
+                    // Restore session from stored tokens
+                    setIsAuthenticated(true);
+                    setPatientId(smartAuth.getPatientId());
+                    setPractitionerId(smartAuth.getPractitionerId());
+
+                    // Get current access token
+                    const token = await smartAuth.getAccessToken();
+                    setAccessToken(token);
+
+                    console.log('[Auth] Session restored successfully');
+                } else {
+                    console.log('[Auth] No existing session found');
+                }
+            } catch (error) {
+                console.error('[Auth] Failed to initialize:', error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        init();
+
+        // Cleanup on unmount
+        return () => {
+            if (wsConnectedRef.current) {
+                consentClient.disconnect();
+                wsConnectedRef.current = false;
+            }
+        };
+    }, []);
+
+    // Connect WebSocket for patient users after auth is settled
+    // Using a separate effect to prevent connection during initial render
+    useEffect(() => {
+        // Only connect if:
+        // 1. Not loading
+        // 2. Authenticated
+        // 3. Is a patient (has patientId)
+        // 4. Not already connected
+        if (!isLoading && isAuthenticated && patientId && !wsConnectedRef.current) {
+            wsConnectedRef.current = true;
+            console.log('[Auth] Connecting WebSocket for patient:', patientId);
+            
+            // Subscribe to state changes to keep UI in sync
+            consentClient.onStateChange((state) => {
+                setConnectionState(state);
+            });
+            
+            consentClient.connect(patientId);
+        }
+    }, [isLoading, isAuthenticated, patientId]);
+
+    const login = async (): Promise<boolean> => {
+        setIsLoading(true);
+
+        try {
+            const success = await smartAuth.login();
+
+            if (success) {
                 setIsAuthenticated(true);
-                setPatientId(smartAuth.getPatientId());
-                setPractitionerId(smartAuth.getPractitionerId());
+                const pid = smartAuth.getPatientId();
+                const pracId = smartAuth.getPractitionerId();
+                setPatientId(pid);
+                setPractitionerId(pracId);
 
                 // Get access token
                 const token = await smartAuth.getAccessToken();
                 setAccessToken(token);
 
-                // Connect to WebSocket if patient
-                const pid = smartAuth.getPatientId();
-                if (pid) {
+                console.log('[Auth] Login successful', { patientId: pid, practitionerId: pracId });
+
+                // Connect WebSocket for patients
+                if (pid && !wsConnectedRef.current) {
+                    wsConnectedRef.current = true;
                     consentClient.connect(pid);
                 }
             }
+
+            return success;
+        } catch (error) {
+            console.error('[Auth] Login failed:', error);
+            return false;
+        } finally {
             setIsLoading(false);
-        };
-
-        init();
-
-        // Listen to connection state changes
-        consentClient.onStateChange(setConnectionState);
-
-        return () => {
-            consentClient.disconnect();
-        };
-    }, []);
-
-    const login = async (): Promise<boolean> => {
-        setIsLoading(true);
-        const success = await smartAuth.login();
-
-        if (success) {
-            setIsAuthenticated(true);
-            const pid = smartAuth.getPatientId();
-            const pracId = smartAuth.getPractitionerId();
-            setPatientId(pid);
-            setPractitionerId(pracId);
-
-            // Get access token
-            const token = await smartAuth.getAccessToken();
-            setAccessToken(token);
-
-            // Connect WebSocket for patients
-            if (pid) {
-                consentClient.connect(pid);
-            }
         }
-
-        setIsLoading(false);
-        return success;
     };
 
     const logout = async (): Promise<void> => {
-        consentClient.disconnect();
-        await smartAuth.logout();
-        setIsAuthenticated(false);
-        setPatientId(null);
-        setPractitionerId(null);
-        setAccessToken(null);
+        try {
+            // Disconnect WebSocket first
+            if (wsConnectedRef.current) {
+                consentClient.disconnect();
+                wsConnectedRef.current = false;
+            }
+
+            // Clear auth tokens
+            await smartAuth.logout();
+
+            // Reset state
+            setIsAuthenticated(false);
+            setPatientId(null);
+            setPractitionerId(null);
+            setAccessToken(null);
+            setConnectionState('disconnected');
+
+            console.log('[Auth] Logout successful');
+        } catch (error) {
+            console.error('[Auth] Logout failed:', error);
+        }
     };
 
     const getAccessToken = async (): Promise<string | null> => {
-        const token = await smartAuth.getAccessToken();
-        setAccessToken(token);
-        return token;
+        try {
+            const token = await smartAuth.getAccessToken();
+            setAccessToken(token);
+            return token;
+        } catch (error) {
+            console.error('[Auth] Failed to get access token:', error);
+            return null;
+        }
     };
 
     return (

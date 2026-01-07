@@ -1,24 +1,36 @@
 /**
  * Patient Group Layout
- * Protected route - only accessible to patients
+ * Protected route - only accessible to authenticated patients
  */
 
 import { Redirect, Stack } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { COLORS } from '../../constants/Theme';
 
 export default function PatientLayout() {
-    const { isAuthenticated, userRole } = useAuth();
+    const { isLoading, isAuthenticated, patientId, practitionerId } = useAuth();
+
+    // Show loading while auth state is being determined
+    if (isLoading) {
+        return (
+            <View style={styles.loading}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
+        );
+    }
 
     // Redirect to login if not authenticated
     if (!isAuthenticated) {
         return <Redirect href="/(auth)/login" />;
     }
 
-    // Redirect to clinician if wrong role
-    if (userRole !== 'patient') {
+    // If user is a clinician (has practitionerId but no patientId), redirect them
+    if (practitionerId && !patientId) {
         return <Redirect href="/(clinician)/dashboard" />;
     }
 
+    // Render patient screens
     return (
         <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="dashboard" />
@@ -28,3 +40,12 @@ export default function PatientLayout() {
         </Stack>
     );
 }
+
+const styles = StyleSheet.create({
+    loading: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: COLORS.background,
+    },
+});
