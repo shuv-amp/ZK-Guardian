@@ -1,0 +1,9 @@
+node_modules
+*/node_modules
+apps
+packages
+circuits
+dist
+.env
+.git
+*.log

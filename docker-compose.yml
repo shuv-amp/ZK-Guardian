@@ -4,9 +4,7 @@
 version: '3.8'
 
 services:
-  # ============================================
   # PostgreSQL Database
-  # ============================================
   postgres:
     image: postgres:16-alpine
     container_name: zk-guardian-postgres
@@ -27,9 +25,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ============================================
   # Redis Cache
-  # ============================================
   redis:
     image: redis:7-alpine
     container_name: zk-guardian-redis
@@ -47,9 +43,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ============================================
   # HAPI FHIR R4 Server
-  # ============================================
   hapi-fhir:
     image: hapiproject/hapi:latest
     container_name: zk-guardian-fhir
@@ -94,13 +88,11 @@ services:
       timeout: 5s
       retries: 5
 
-  # ============================================
   # ZK Guardian Gateway
-  # ============================================
   gateway:
     build:
-      context: ./gateway
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: gateway/Dockerfile
     container_name: zk-guardian-gateway
     ports:
       - "3000:3000"
@@ -131,9 +123,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # ============================================
   # Prometheus Monitoring
-  # ============================================
   prometheus:
     image: prom/prometheus:v2.45.0
     container_name: zk-guardian-prometheus
@@ -150,9 +140,7 @@ services:
       - zk-network
     restart: unless-stopped
 
-  # ============================================
   # Grafana Dashboard
-  # ============================================
   grafana:
     image: grafana/grafana:10.0.0
     container_name: zk-guardian-grafana
