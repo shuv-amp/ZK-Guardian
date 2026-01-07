@@ -28,5 +28,9 @@
   "engines": {
     "node": ">=20.0.0",
     "pnpm": ">=9.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "ethers": "^6.16.0"
   }
 }
