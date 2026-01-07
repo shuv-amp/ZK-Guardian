@@ -16,12 +16,16 @@ build/
 *.tsbuildinfo
 
 # ZK Circuit artifacts (large files)
+# ZK Circuit artifacts (large files)
 circuits/build/*.ptau
 circuits/build/*.zkey
 circuits/build/*.wasm
 circuits/build/*.r1cs
 circuits/build/*.sym
 !circuits/build/.gitkeep
+circuits/*.ptau
+circuits/*.zkey
+circuits/*_js/
 
 # Contracts
 contracts/artifacts/
@@ -61,3 +65,5 @@ pnpm-debug.log*
 
 # Heroku
 .heroku/
+
+data_flow.md
