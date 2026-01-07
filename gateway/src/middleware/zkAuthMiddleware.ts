@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import { zkProofService, AccessRequest } from '../services/zkProofService.js';
 import { consentHandshakeService } from '../services/consentHandshake.js';
 import { replayProtection } from '../services/replayProtection.js';
+import { getRedis } from '../db/redis.js';
 import axios from 'axios';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
@@ -113,19 +114,38 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
         resourceId = crypto.createHash("sha256").update(queryStr).digest("hex").slice(0, 16);
     }
 
-    const accessRequest: AccessRequest = {
+    // Generate or retrieve session parameters
+    const redis = getRedis();
+    const nullifierKey = `zk:nullifier:${smartContext.patient}`;
+    let patientNullifier = await redis.get(nullifierKey);
+    let sessionNonce = "";
+
+    if (patientNullifier) {
+        // If we have the nullifier, generate a fresh nonce for this request
+        // 31 bytes to fit in BN254 field
+        sessionNonce = BigInt("0x" + crypto.randomBytes(31).toString("hex")).toString();
+    }
+
+    // Prepare partial request (might be missing nullifier if not cached)
+    const accessRequest: any = {
         patientId: smartContext.patient,
         clinicianId: smartContext.practitioner || smartContext.sub || "unknown",
         resourceId,
-        resourceType
+        resourceType,
+        patientNullifier, // might be null
+        sessionNonce
     };
 
     const performAudit = async (request: AccessRequest): Promise<void> => {
         logger.info({ resourceType, resourceId }, 'Initiating ZK Audit');
         accessRequestsCounter.inc({ resource_type: resourceType, status: 'initiated' });
 
+        if (!request.patientNullifier) {
+            throw new Error("NO_ACTIVE_CONSENT"); // Trigger handshake if we don't have the key
+        }
+
         // Generate Proof
-        const proofResult = await zkProofService.generateAccessProof(request);
+        const proofResult = await zkProofService.generateAccessProof(request as AccessRequest);
 
         // CRITICAL: Check for replay attack BEFORE blockchain submission
         const replayCheck = await replayProtection.checkAndReserve(proofResult.proofHash, {
@@ -149,7 +169,7 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
         let txInfo;
         try {
             txInfo = await submitToBlockchain(proofResult);
-            
+
             // Mark proof as confirmed
             await replayProtection.confirmProof(proofResult.proofHash, txInfo.txHash);
             accessRequestsCounter.inc({ resource_type: resourceType, status: 'success' });
@@ -185,16 +205,26 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
             accessRequestsCounter.inc({ resource_type: resourceType, status: 'consent_needed' });
 
             try {
-                // Trigger WebSocket Handshake
-                const granted = await consentHandshakeService.requestConsent(accessRequest.patientId, {
+                const response = await consentHandshakeService.requestConsent(accessRequest.patientId, {
                     practitioner: accessRequest.clinicianId,
                     resourceType: accessRequest.resourceType,
                     resourceId: accessRequest.resourceId
                 });
 
-                if (granted) {
+                if (response.approved && response.nullifier) {
                     logger.info({ patientId: accessRequest.patientId }, 'Patient approved, creating JIT consent');
+
+                    // Create JIT Consent FHIR resource
                     await createJitConsent(accessRequest);
+
+                    // Cache the nullifier for 1 hour (matching JIT consent duration)
+                    await redis.setex(nullifierKey, 3600, response.nullifier);
+
+                    // Update request with new secure credentials
+                    accessRequest.patientNullifier = response.nullifier;
+                    // Use the nonce provided by mobile, or generate one if missing
+                    accessRequest.sessionNonce = response.sessionNonce ||
+                        BigInt("0x" + crypto.randomBytes(31).toString("hex")).toString();
 
                     // Retry Audit
                     await performAudit(accessRequest);
@@ -216,16 +246,16 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
             }
         } else if (error.message === 'FHIR_FETCH_FAILED') {
             accessRequestsCounter.inc({ resource_type: resourceType, status: 'fhir_error' });
-            return res.status(502).json({ 
+            return res.status(502).json({
                 error: "FHIR_UNAVAILABLE",
-                message: "Upstream FHIR Service Unavailable" 
+                message: "Upstream FHIR Service Unavailable"
             });
         } else {
             logger.error({ error: error.message }, 'ZK Audit failed');
             accessRequestsCounter.inc({ resource_type: resourceType, status: 'audit_failed' });
-            return res.status(500).json({ 
+            return res.status(500).json({
                 error: "AUDIT_FAILED",
-                message: "ZK Audit Generation Failed" 
+                message: "ZK Audit Generation Failed"
             });
         }
     }

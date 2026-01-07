@@ -6,9 +6,7 @@ import { z } from 'zod';
  * All input validation in one place for security and maintainability.
  */
 
-// ============================================
 // Common Validators
-// ============================================
 
 export const PatientIdSchema = z.string()
     .min(1, 'Patient ID is required')
@@ -26,9 +24,7 @@ export const ResourceTypeSchema = z.enum([
     'Immunization', 'CarePlan', 'Goal', 'Consent'
 ]);
 
-// ============================================
 // Audit API Schemas
-// ============================================
 
 export const AccessHistoryQuerySchema = z.object({
     from: z.string().datetime().optional(),
@@ -56,9 +52,7 @@ export const AlertTypeSchema = z.enum([
     'SENSITIVE_RESOURCE', 'BREAK_GLASS'
 ]);
 
-// ============================================
 // Break-Glass Schemas
-// ============================================
 
 export const BreakGlassReasonSchema = z.enum([
     'LIFE_THREATENING_EMERGENCY',
@@ -77,9 +71,7 @@ export const BreakGlassPayloadSchema = z.object({
     estimatedDuration: z.number().int().positive().optional()
 });
 
-// ============================================
 // WebSocket Message Schemas
-// ============================================
 
 export const ConsentRequestSchema = z.object({
     type: z.literal('CONSENT_REQUEST'),
@@ -99,9 +91,7 @@ export const ConsentResponseSchema = z.object({
     signature: z.string().optional()
 });
 
-// ============================================
 // FHIR Query Schemas
-// ============================================
 
 export const FHIRSearchParamsSchema = z.object({
     patient: PatientIdSchema.optional(),
@@ -114,9 +104,7 @@ export const FHIRSearchParamsSchema = z.object({
     date: z.string().optional()
 }).passthrough(); // Allow other FHIR params
 
-// ============================================
 // Validation Helper
-// ============================================
 
 export function validateOrThrow<T>(schema: z.ZodSchema<T>, data: unknown): T {
     const result = schema.safeParse(data);

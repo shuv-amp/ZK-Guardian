@@ -25,9 +25,7 @@ export const consentsRouter: Router = Router({ mergeParams: true });
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || 'http://localhost:8080/fhir';
 
-// ============================================
 // Schemas
-// ============================================
 
 const ListConsentsQuerySchema = z.object({
     status: z.enum(['active', 'inactive', 'revoked', 'all']).default('active'),
@@ -56,9 +54,7 @@ const RevokeConsentSchema = z.object({
     revokeImmediately: z.boolean().default(true)
 });
 
-// ============================================
 // GET /api/patient/:patientId/consents
-// ============================================
 
 consentsRouter.get('/', validateQuery(ListConsentsQuerySchema), async (req: Request, res: Response) => {
     try {
@@ -130,9 +126,7 @@ consentsRouter.get('/', validateQuery(ListConsentsQuerySchema), async (req: Requ
     }
 });
 
-// ============================================
 // POST /api/patient/:patientId/consents
-// ============================================
 
 consentsRouter.post('/', validateBody(CreateConsentSchema), async (req: Request, res: Response) => {
     try {
@@ -267,9 +261,7 @@ consentsRouter.post('/', validateBody(CreateConsentSchema), async (req: Request,
     }
 });
 
-// ============================================
 // GET /api/patient/:patientId/consents/:consentId
-// ============================================
 
 consentsRouter.get('/:consentId', async (req: Request, res: Response) => {
     try {
@@ -346,9 +338,7 @@ consentsRouter.get('/:consentId', async (req: Request, res: Response) => {
     }
 });
 
-// ============================================
 // POST /api/patient/:patientId/consents/:consentId/revoke
-// ============================================
 
 consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), async (req: Request, res: Response) => {
     try {

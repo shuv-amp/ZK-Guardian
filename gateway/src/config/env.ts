@@ -5,6 +5,10 @@
  */
 
 import { z } from 'zod';
+import dotenv from 'dotenv';
+
+// Load environment variables from .env file
+dotenv.config();
 
 const envSchema = z.object({
     // Server
@@ -18,10 +22,27 @@ const envSchema = z.object({
     ).default('*'),
 
     // Database
-    DATABASE_URL: z.string().url().optional(),
+    DATABASE_URL: z.string().url().optional().transform(url => {
+        console.log('[Config] Raw DATABASE_URL:', url);
+        if (process.env.NODE_ENV === 'development' && url) {
+            console.log('[Config] Checking for auto-fix...');
+            if (url.includes('@postgres:') || url.includes('@db:')) {
+                console.log('[Config] Auto-fixing Database URL for local development: postgres -> localhost');
+                let fixed = url.replace('@postgres:', '@localhost:').replace('@db:', '@localhost:');
+                return fixed;
+            }
+        }
+        return url;
+    }),
 
     // Redis
-    REDIS_URL: z.string().url().optional(),
+    REDIS_URL: z.string().url().optional().transform(url => {
+        if (process.env.NODE_ENV === 'development' && url?.includes('//redis:')) {
+            console.log('[Config] Auto-fixing Redis URL for local development: redis -> localhost');
+            return url.replace('//redis:', '//localhost:');
+        }
+        return url;
+    }),
 
     // HAPI FHIR
     HAPI_FHIR_URL: z.string().url().default('http://localhost:8080'),
@@ -62,6 +83,7 @@ function loadEnv() {
         return envSchema.parse({});
     }
 
+    console.log('[DEBUG] Loaded Env:', JSON.stringify(parsed.data, null, 2));
     return parsed.data;
 }
 

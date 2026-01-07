@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { createHash } from 'crypto';
 import { prisma } from '../db/client.js';
 import { logger, logAccessEvent, logSecurityEvent } from '../lib/logger.js';
-import { BreakGlassPayloadSchema, validateOrThrow } from '../schemas/validation.js';
+import { BreakGlassPayloadSchema, validateOrThrow, ValidationError } from '../schemas/validation.js';
 import { BreakGlassInvalidError } from '../lib/errors.js';
 
 /**
@@ -47,6 +47,8 @@ export async function breakGlassMiddleware(
     try {
         // Decode and validate payload
         const decoded = Buffer.from(breakGlassHeader as string, 'base64').toString('utf-8');
+        logger.debug({ headers: req.headers, path: req.path }, 'Processing break-glass header');
+
         const payload = validateOrThrow(BreakGlassPayloadSchema, JSON.parse(decoded));
 
         const smartContext = (req as any).smartContext;
@@ -152,21 +154,29 @@ export async function breakGlassMiddleware(
 
     } catch (error) {
         if (error instanceof BreakGlassInvalidError) {
+            logger.warn({ error: error.message }, 'Break-glass invalid error');
             res.status(400).json(error.toJSON());
             return;
         }
+        if (error instanceof ValidationError) {
+            logger.warn({ errors: error.errors }, 'Break-glass payload validation failed');
+            res.status(400).json({
+                error: 'VALIDATION_ERROR',
+                message: 'Invalid break-glass payload',
+                details: error.errors
+            });
+            return;
+        }
 
-        logger.error({ error }, 'Break-glass validation failed');
+        logger.error({ error }, 'Break-glass middleware failed');
         res.status(400).json({
             error: 'INVALID_BREAK_GLASS',
-            message: 'Invalid break-glass request'
+            message: 'Invalid break-glass request processing'
         });
     }
 }
 
-// ============================================
 // Helpers
-// ============================================
 
 function extractPatientId(req: Request): string | null {
     // Check URL params
@@ -180,17 +190,27 @@ function extractPatientId(req: Request): string | null {
     // Check body
     if (req.body?.patientId) return req.body.patientId;
 
+    // Manual path extraction (Critical for middleware)
+    // Matches /Patient/123 or /Patient/123/...
+    const match = req.path.match(/\/Patient\/([^/]+)/);
+    if (match) return match[1];
+
     return null;
 }
 
 function extractResourceType(req: Request): string {
-    const match = req.path.match(/\/fhir\/([A-Za-z]+)/);
-    return match?.[1] || 'Unknown';
+    // Handle path with /fhir prefix
+    const fhirMatch = req.path.match(/\/fhir\/([A-Za-z]+)/);
+    if (fhirMatch) return fhirMatch[1];
+
+    // Handle direct resource path (e.g., /Patient/...)
+    const resourceMatch = req.path.match(/^\/([A-Za-z]+)/);
+    if (resourceMatch && resourceMatch[1] !== 'fhir') return resourceMatch[1];
+
+    return 'Unknown';
 }
 
-// ============================================
 // Admin Functions
-// ============================================
 
 export async function getPendingReviews(): Promise<any[]> {
     return prisma.breakGlassEvent.findMany({

@@ -80,6 +80,36 @@ export const alertsGauge = new Gauge({
     help: 'Unacknowledged alerts count'
 });
 
+// Blockchain transaction counter
+export const blockchainTransactionsCounter = new Counter({
+    name: 'zk_blockchain_transactions_total',
+    help: 'Total blockchain transactions',
+    labelNames: ['method', 'status']
+});
+
+// Blockchain latency histogram
+export const blockchainLatencyHistogram = new Histogram({
+    name: 'zk_blockchain_latency_seconds',
+    help: 'Blockchain transaction latency',
+    labelNames: ['method'],
+    buckets: [1, 2, 5, 10, 20, 60]
+});
+
+// Export grouped object for easier imports
+export const prometheusMetrics = {
+    proofGenerationHistogram,
+    accessRequestsCounter,
+    consentDenialsCounter,
+    breakGlassCounter,
+    batchQueueGauge,
+    gasUsedHistogram,
+    wsConnectionsGauge,
+    fhirLatencyHistogram,
+    alertsGauge,
+    blockchainTransactions: blockchainTransactionsCounter,
+    blockchainLatency: blockchainLatencyHistogram
+};
+
 // === Metrics Router ===
 
 export const metricsRouter: Router = Router();
