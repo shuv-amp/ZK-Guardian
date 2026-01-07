@@ -1,16 +1,24 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
+import { ConsentModal } from '../../components/ConsentModal';
 
 /**
  * Patient Dashboard
  * 
  * Displays consent history, connection status, and quick actions for patients.
+ * WebSocket connection is now managed centrally by useAuth - no need to connect here.
  */
 export default function PatientDashboard() {
     const { patientId, logout, connectionState } = useAuth();
+    const router = useRouter();
+
+    // WebSocket connection is managed by useAuth provider
+    // The connection is established automatically when patientId is available
 
     const getConnectionColor = () => {
         switch (connectionState) {
@@ -32,7 +40,7 @@ export default function PatientDashboard() {
 
     return (
         <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
+
             <ScrollView contentContainerStyle={styles.scrollContent}>
                 {/* Header */}
                 <View style={styles.header}>
@@ -62,25 +70,41 @@ export default function PatientDashboard() {
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Quick Actions</Text>
                     <View style={styles.actionsGrid}>
-                        <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
+                        <TouchableOpacity
+                            style={styles.actionCard}
+                            activeOpacity={0.7}
+                            onPress={() => router.push('/(patient)/alerts')}
+                        >
                             <View style={[styles.actionIcon, { backgroundColor: COLORS.primaryLight }]}>
                                 <Ionicons name="time-outline" size={24} color={COLORS.primary} />
                             </View>
                             <Text style={styles.actionLabel}>Access History</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
+                        <TouchableOpacity
+                            style={styles.actionCard}
+                            activeOpacity={0.7}
+                            onPress={() => router.push('/(patient)/consents')}
+                        >
                             <View style={[styles.actionIcon, { backgroundColor: COLORS.successBg }]}>
                                 <Ionicons name="document-text-outline" size={24} color={COLORS.success} />
                             </View>
                             <Text style={styles.actionLabel}>My Consents</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
+                        <TouchableOpacity
+                            style={styles.actionCard}
+                            activeOpacity={0.7}
+                            onPress={() => router.push('/(patient)/consents')}
+                        >
                             <View style={[styles.actionIcon, { backgroundColor: COLORS.errorBg }]}>
                                 <Ionicons name="ban-outline" size={24} color={COLORS.error} />
                             </View>
                             <Text style={styles.actionLabel}>Revoke Access</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
+                        <TouchableOpacity
+                            style={styles.actionCard}
+                            activeOpacity={0.7}
+                            onPress={() => router.push('/(patient)/settings')}
+                        >
                             <View style={[styles.actionIcon, { backgroundColor: COLORS.infoBg }]}>
                                 <Ionicons name="settings-outline" size={24} color={COLORS.info} />
                             </View>
@@ -103,6 +127,9 @@ export default function PatientDashboard() {
                     </View>
                 </View>
             </ScrollView>
+
+            {/* Real-time Consent Popup */}
+            <ConsentModal />
         </SafeAreaView>
     );
 }

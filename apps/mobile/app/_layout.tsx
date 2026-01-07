@@ -1,13 +1,17 @@
 /**
  * ZK Guardian Mobile App - Root Layout
- * Handles navigation, auth state, and real-time consent modal
+ * 
+ * This is the root layout that wraps all screens.
+ * Auth-based routing is handled by:
+ * - `app/index.tsx` for initial/deep link routing
+ * - Individual screen guards where needed
  */
 
 import { useEffect, useState } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
-import { AuthProvider, useAuth } from '../hooks/useAuth';
+import { AuthProvider } from '../hooks/useAuth';
 import { ConsentModal } from '../components/ConsentModal';
 import { isBackendConfigured } from '../config/env';
 import { View, Text, StyleSheet } from 'react-native';
@@ -15,75 +19,6 @@ import { COLORS, FONTS, SPACING } from '../constants/Theme';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
-
-function RootNavigator() {
-    const { isLoading, isAuthenticated, patientId, practitionerId } = useAuth();
-    const segments = useSegments();
-    const router = useRouter();
-
-    // Handle navigation based on auth state
-    useEffect(() => {
-        if (isLoading) return;
-
-        const inAuthGroup = segments[0] === '(auth)';
-
-        if (!isAuthenticated && !inAuthGroup) {
-            // Redirect to login
-            router.replace('/(auth)/login');
-        } else if (isAuthenticated && inAuthGroup) {
-            // Redirect to appropriate dashboard
-            if (patientId) {
-                router.replace('/(patient)/dashboard');
-            } else if (practitionerId) {
-                router.replace('/(clinician)/dashboard');
-            }
-        }
-    }, [isLoading, isAuthenticated, segments, patientId, practitionerId]);
-
-    if (isLoading) {
-        return null; // Splash screen still showing
-    }
-
-    return (
-        <>
-            <StatusBar style="dark" backgroundColor={COLORS.background} />
-            <Stack screenOptions={{ 
-                headerShown: false,
-                contentStyle: { backgroundColor: COLORS.background }
-            }}>
-                {/* Auth screens - shown when not authenticated */}
-                <Stack.Screen
-                    name="(auth)"
-                    options={{
-                        headerShown: false,
-                        gestureEnabled: false,
-                    }}
-                />
-
-                {/* Patient screens - shown when role is patient */}
-                <Stack.Screen
-                    name="(patient)"
-                    options={{
-                        headerShown: false,
-                        gestureEnabled: false,
-                    }}
-                />
-
-                {/* Clinician screens - shown when role is clinician */}
-                <Stack.Screen
-                    name="(clinician)"
-                    options={{
-                        headerShown: false,
-                        gestureEnabled: false,
-                    }}
-                />
-            </Stack>
-
-            {/* Global consent request modal */}
-            <ConsentModal />
-        </>
-    );
-}
 
 function ConfigurationError() {
     return (
@@ -103,7 +38,8 @@ export default function RootLayout() {
     useEffect(() => {
         async function prepare() {
             try {
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // Brief delay for splash screen
+                await new Promise(resolve => setTimeout(resolve, 300));
             } finally {
                 setAppReady(true);
                 await SplashScreen.hideAsync();
@@ -123,7 +59,59 @@ export default function RootLayout() {
 
     return (
         <AuthProvider>
-            <RootNavigator />
+            <StatusBar style="dark" backgroundColor={COLORS.background} />
+            <Stack screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: COLORS.background },
+                animation: 'fade',
+            }}>
+                {/* Index route - handles auth-based redirects */}
+                <Stack.Screen
+                    name="index"
+                    options={{
+                        headerShown: false,
+                    }}
+                />
+
+                {/* OAuth callback route */}
+                <Stack.Screen
+                    name="auth"
+                    options={{
+                        headerShown: false,
+                        animation: 'none',
+                    }}
+                />
+
+                {/* Auth screens */}
+                <Stack.Screen
+                    name="(auth)"
+                    options={{
+                        headerShown: false,
+                        gestureEnabled: false,
+                    }}
+                />
+
+                {/* Patient screens */}
+                <Stack.Screen
+                    name="(patient)"
+                    options={{
+                        headerShown: false,
+                        gestureEnabled: false,
+                    }}
+                />
+
+                {/* Clinician screens */}
+                <Stack.Screen
+                    name="(clinician)"
+                    options={{
+                        headerShown: false,
+                        gestureEnabled: false,
+                    }}
+                />
+            </Stack>
+
+            {/* Global consent request modal */}
+            <ConsentModal />
         </AuthProvider>
     );
 }
@@ -150,4 +138,3 @@ const styles = StyleSheet.create({
         ...FONTS.regular,
     },
 });
-

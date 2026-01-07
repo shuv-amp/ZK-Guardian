@@ -58,7 +58,7 @@ export default function ProofsScreen() {
             if (!practitionerId || !accessToken) return;
 
             const response = await fetch(
-                `${config.API_URL}/api/clinician/${practitionerId}/proofs?limit=20`,
+                `${config.GATEWAY_URL}/api/clinician/${practitionerId}/proofs?limit=20`,
                 {
                     headers: {
                         'Authorization': `Bearer ${accessToken}`,
