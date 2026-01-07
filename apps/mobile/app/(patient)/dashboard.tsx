@@ -1,22 +1,31 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
+import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
+import { ConsentModal } from '../../components/ConsentModal';
 
 /**
  * Patient Dashboard
  * 
  * Displays consent history, connection status, and quick actions for patients.
+ * WebSocket connection is now managed centrally by useAuth - no need to connect here.
  */
 export default function PatientDashboard() {
     const { patientId, logout, connectionState } = useAuth();
+    const router = useRouter();
+
+    // WebSocket connection is managed by useAuth provider
+    // The connection is established automatically when patientId is available
 
     const getConnectionColor = () => {
         switch (connectionState) {
-            case 'connected': return '#4CAF50';
-            case 'connecting': return '#FF9800';
-            case 'error': return '#F44336';
-            default: return '#9E9E9E';
+            case 'connected': return COLORS.success;
+            case 'connecting': return COLORS.warning;
+            case 'error': return COLORS.error;
+            default: return COLORS.textLight;
         }
     };
 
@@ -31,6 +40,7 @@ export default function PatientDashboard() {
 
     return (
         <SafeAreaView style={styles.container}>
+
             <ScrollView contentContainerStyle={styles.scrollContent}>
                 {/* Header */}
                 <View style={styles.header}>
@@ -39,7 +49,7 @@ export default function PatientDashboard() {
                         <Text style={styles.patientId}>Patient ID: {patientId}</Text>
                     </View>
                     <TouchableOpacity onPress={logout} style={styles.logoutButton}>
-                        <Ionicons name="log-out-outline" size={24} color="#666" />
+                        <Ionicons name="log-out-outline" size={24} color={COLORS.textSecondary} />
                     </TouchableOpacity>
                 </View>
 
@@ -60,20 +70,44 @@ export default function PatientDashboard() {
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Quick Actions</Text>
                     <View style={styles.actionsGrid}>
-                        <TouchableOpacity style={styles.actionCard}>
-                            <Ionicons name="time-outline" size={32} color="#2196F3" />
+                        <TouchableOpacity
+                            style={styles.actionCard}
+                            activeOpacity={0.7}
+                            onPress={() => router.push('/(patient)/alerts')}
+                        >
+                            <View style={[styles.actionIcon, { backgroundColor: COLORS.primaryLight }]}>
+                                <Ionicons name="time-outline" size={24} color={COLORS.primary} />
+                            </View>
                             <Text style={styles.actionLabel}>Access History</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.actionCard}>
-                            <Ionicons name="document-text-outline" size={32} color="#4CAF50" />
+                        <TouchableOpacity
+                            style={styles.actionCard}
+                            activeOpacity={0.7}
+                            onPress={() => router.push('/(patient)/consents')}
+                        >
+                            <View style={[styles.actionIcon, { backgroundColor: COLORS.successBg }]}>
+                                <Ionicons name="document-text-outline" size={24} color={COLORS.success} />
+                            </View>
                             <Text style={styles.actionLabel}>My Consents</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.actionCard}>
-                            <Ionicons name="ban-outline" size={32} color="#F44336" />
+                        <TouchableOpacity
+                            style={styles.actionCard}
+                            activeOpacity={0.7}
+                            onPress={() => router.push('/(patient)/consents')}
+                        >
+                            <View style={[styles.actionIcon, { backgroundColor: COLORS.errorBg }]}>
+                                <Ionicons name="ban-outline" size={24} color={COLORS.error} />
+                            </View>
                             <Text style={styles.actionLabel}>Revoke Access</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.actionCard}>
-                            <Ionicons name="settings-outline" size={32} color="#9C27B0" />
+                        <TouchableOpacity
+                            style={styles.actionCard}
+                            activeOpacity={0.7}
+                            onPress={() => router.push('/(patient)/settings')}
+                        >
+                            <View style={[styles.actionIcon, { backgroundColor: COLORS.infoBg }]}>
+                                <Ionicons name="settings-outline" size={24} color={COLORS.info} />
+                            </View>
                             <Text style={styles.actionLabel}>Settings</Text>
                         </TouchableOpacity>
                     </View>
@@ -81,14 +115,21 @@ export default function PatientDashboard() {
 
                 {/* Privacy Shield */}
                 <View style={styles.privacySection}>
-                    <Ionicons name="shield-checkmark" size={48} color="#4CAF50" />
-                    <Text style={styles.privacyTitle}>Your Privacy is Protected</Text>
-                    <Text style={styles.privacyText}>
-                        All access requests are verified using zero-knowledge proofs.
-                        Your personal data never leaves your control.
-                    </Text>
+                    <View style={styles.privacyIconContainer}>
+                        <Ionicons name="shield-checkmark" size={32} color={COLORS.success} />
+                    </View>
+                    <View style={styles.privacyContent}>
+                        <Text style={styles.privacyTitle}>Your Privacy is Protected</Text>
+                        <Text style={styles.privacyText}>
+                            All access requests are verified using zero-knowledge proofs.
+                            Your personal data never leaves your control.
+                        </Text>
+                    </View>
                 </View>
             </ScrollView>
+
+            {/* Real-time Consent Popup */}
+            <ConsentModal />
         </SafeAreaView>
     );
 }
@@ -96,112 +137,129 @@ export default function PatientDashboard() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F5F7FA',
+        backgroundColor: COLORS.background,
     },
     scrollContent: {
-        padding: 20,
+        padding: SPACING.l,
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 24,
+        marginBottom: SPACING.xl,
     },
     greeting: {
         fontSize: 28,
-        fontWeight: '700',
-        color: '#1A1A1A',
+        ...FONTS.bold,
+        color: COLORS.text,
+        letterSpacing: -0.5,
     },
     patientId: {
         fontSize: 14,
-        color: '#666',
-        marginTop: 4,
+        color: COLORS.textSecondary,
+        marginTop: SPACING.xs,
+        ...FONTS.medium,
     },
     logoutButton: {
-        padding: 8,
+        padding: SPACING.s,
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.full,
+        ...SHADOWS.small,
     },
     statusCard: {
-        backgroundColor: '#FFF',
-        borderRadius: 16,
-        padding: 20,
-        marginBottom: 24,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.l,
+        padding: SPACING.l,
+        marginBottom: SPACING.xl,
+        ...SHADOWS.small,
+        borderLeftWidth: 4,
+        borderLeftColor: COLORS.primary,
     },
     statusRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 8,
+        marginBottom: SPACING.s,
     },
     statusDot: {
-        width: 12,
-        height: 12,
-        borderRadius: 6,
-        marginRight: 8,
+        width: 10,
+        height: 10,
+        borderRadius: RADIUS.full,
+        marginRight: SPACING.s,
     },
     statusText: {
         fontSize: 16,
-        fontWeight: '600',
-        color: '#1A1A1A',
+        ...FONTS.semibold,
+        color: COLORS.text,
     },
     statusDescription: {
         fontSize: 14,
-        color: '#666',
+        color: COLORS.textSecondary,
         lineHeight: 20,
+        ...FONTS.regular,
     },
     section: {
-        marginBottom: 24,
+        marginBottom: SPACING.xl,
     },
     sectionTitle: {
         fontSize: 18,
-        fontWeight: '600',
-        color: '#1A1A1A',
-        marginBottom: 16,
+        ...FONTS.semibold,
+        color: COLORS.text,
+        marginBottom: SPACING.m,
     },
     actionsGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 12,
+        gap: SPACING.m,
     },
     actionCard: {
         width: '47%',
-        backgroundColor: '#FFF',
-        borderRadius: 16,
-        padding: 20,
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.l,
+        padding: SPACING.m,
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
+        ...SHADOWS.small,
+    },
+    actionIcon: {
+        width: 48,
+        height: 48,
+        borderRadius: RADIUS.full,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: SPACING.s,
     },
     actionLabel: {
         fontSize: 14,
-        fontWeight: '500',
-        color: '#1A1A1A',
-        marginTop: 12,
+        ...FONTS.medium,
+        color: COLORS.text,
+        marginTop: SPACING.xs,
         textAlign: 'center',
     },
     privacySection: {
-        backgroundColor: '#E8F5E9',
-        borderRadius: 16,
-        padding: 24,
-        alignItems: 'center',
+        backgroundColor: COLORS.successBg,
+        borderRadius: RADIUS.l,
+        padding: SPACING.l,
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        borderWidth: 1,
+        borderColor: 'rgba(76, 175, 80, 0.2)',
+    },
+    privacyIconContainer: {
+        marginRight: SPACING.m,
+        marginTop: SPACING.xs,
+    },
+    privacyContent: {
+        flex: 1,
     },
     privacyTitle: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: '#2E7D32',
-        marginTop: 12,
-        marginBottom: 8,
+        fontSize: 16,
+        ...FONTS.semibold,
+        color: COLORS.success,
+        marginBottom: SPACING.xs,
     },
     privacyText: {
-        fontSize: 14,
-        color: '#558B2F',
-        textAlign: 'center',
-        lineHeight: 20,
+        fontSize: 13,
+        color: COLORS.textSecondary,
+        lineHeight: 18,
+        ...FONTS.regular,
     },
 });

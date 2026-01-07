@@ -3,3 +3,4 @@ packages:
   - "gateway"
   - "circuits"
   - "contracts"
+  - "packages/*"

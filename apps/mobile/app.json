@@ -30,7 +30,8 @@
             "permissions": [
                 "USE_BIOMETRIC",
                 "USE_FINGERPRINT"
-            ]
+            ],
+            "usesCleartextTraffic": true
         },
         "web": {
             "bundler": "metro",

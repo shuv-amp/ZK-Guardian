@@ -10,40 +10,38 @@ import {
     TouchableOpacity,
     StyleSheet,
     SafeAreaView,
-    ActivityIndicator
+    ActivityIndicator,
+    StatusBar
 } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
+import * as WebBrowser from 'expo-web-browser';
+import { Ionicons } from '@expo/vector-icons';
+import { COLORS, FONTS, SHADOWS, SPACING, RADIUS } from '../../constants/Theme';
+
+WebBrowser.maybeCompleteAuthSession();
 
 type UserRole = 'patient' | 'clinician';
 
 export default function LoginScreen() {
-    const router = useRouter();
     const { login } = useAuth();
     const [selectedRole, setSelectedRole] = useState<UserRole>('patient');
     const [loading, setLoading] = useState(false);
 
     const handleLogin = async () => {
+        if (loading) return;
         setLoading(true);
+
         try {
-            // TODO: Implement SMART on FHIR OAuth flow
-            // For now, simulate login
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // Initiate real SMART on FHIR login flow
+            // Navigation is handled automatically by _layout.tsx based on auth state
+            const success = await login();
 
-            // Mock token and user ID
-            const mockToken = 'mock-jwt-token';
-            const mockUserId = selectedRole === 'patient' ? 'patient-123' : 'practitioner-456';
-
-            await login(mockToken, selectedRole, mockUserId);
-
-            // Navigate to appropriate dashboard
-            if (selectedRole === 'patient') {
-                router.replace('/(patient)/dashboard');
-            } else {
-                router.replace('/(clinician)/dashboard');
+            if (!success) {
+                // Stay on login screen if failed
+                console.log('[LoginScreen] Login failed or cancelled');
             }
         } catch (error) {
-            console.error('Login failed:', error);
+            console.error('[LoginScreen] Error during login:', error);
         } finally {
             setLoading(false);
         }
@@ -51,17 +49,20 @@ export default function LoginScreen() {
 
     return (
         <SafeAreaView style={styles.container}>
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
             <View style={styles.content}>
                 {/* Header */}
                 <View style={styles.header}>
-                    <Text style={styles.icon}>🛡️</Text>
+                    <View style={styles.iconContainer}>
+                        <Ionicons name="shield-checkmark" size={48} color={COLORS.primary} />
+                    </View>
                     <Text style={styles.title}>ZK Guardian</Text>
                     <Text style={styles.subtitle}>Privacy-Preserving Healthcare</Text>
                 </View>
 
                 {/* Role Selection */}
                 <View style={styles.roleContainer}>
-                    <Text style={styles.roleLabel}>I am a...</Text>
+                    <Text style={styles.roleLabel}>Select your role</Text>
 
                     <View style={styles.roleButtons}>
                         <TouchableOpacity
@@ -71,8 +72,18 @@ export default function LoginScreen() {
                             ]}
                             onPress={() => setSelectedRole('patient')}
                             disabled={loading}
+                            activeOpacity={0.7}
                         >
-                            <Text style={styles.roleIcon}>👤</Text>
+                            <View style={[
+                                styles.roleIconContainer,
+                                selectedRole === 'patient' && styles.roleIconContainerActive
+                            ]}>
+                                <Ionicons
+                                    name="person"
+                                    size={24}
+                                    color={selectedRole === 'patient' ? COLORS.primary : COLORS.textSecondary}
+                                />
+                            </View>
                             <Text style={[
                                 styles.roleText,
                                 selectedRole === 'patient' && styles.roleTextActive,
@@ -88,8 +99,18 @@ export default function LoginScreen() {
                             ]}
                             onPress={() => setSelectedRole('clinician')}
                             disabled={loading}
+                            activeOpacity={0.7}
                         >
-                            <Text style={styles.roleIcon}>🩺</Text>
+                            <View style={[
+                                styles.roleIconContainer,
+                                selectedRole === 'clinician' && styles.roleIconContainerActive
+                            ]}>
+                                <Ionicons
+                                    name="medkit"
+                                    size={24}
+                                    color={selectedRole === 'clinician' ? COLORS.primary : COLORS.textSecondary}
+                                />
+                            </View>
                             <Text style={[
                                 styles.roleText,
                                 selectedRole === 'clinician' && styles.roleTextActive,
@@ -105,20 +126,27 @@ export default function LoginScreen() {
                     style={[styles.loginButton, loading && styles.loginButtonDisabled]}
                     onPress={handleLogin}
                     disabled={loading}
+                    activeOpacity={0.8}
                 >
                     {loading ? (
                         <ActivityIndicator color="#fff" />
                     ) : (
-                        <Text style={styles.loginButtonText}>
-                            Sign in with SMART on FHIR
-                        </Text>
+                        <View style={styles.loginButtonContent}>
+                            <Ionicons name="log-in-outline" size={24} color="#fff" style={{ marginRight: 8 }} />
+                            <Text style={styles.loginButtonText}>
+                                Sign in with SMART on FHIR
+                            </Text>
+                        </View>
                     )}
                 </TouchableOpacity>
 
                 {/* Footer */}
-                <Text style={styles.footer}>
-                    Secure • Private • HIPAA Compliant
-                </Text>
+                <View style={styles.footerContainer}>
+                    <Ionicons name="lock-closed-outline" size={14} color={COLORS.textLight} style={{ marginRight: 4 }} />
+                    <Text style={styles.footer}>
+                        Secure • Private • HIPAA Compliant
+                    </Text>
+                </View>
             </View>
         </SafeAreaView>
     );
@@ -127,88 +155,121 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F0F4FF',
+        backgroundColor: COLORS.background,
     },
     content: {
         flex: 1,
         justifyContent: 'center',
-        paddingHorizontal: 24,
+        paddingHorizontal: SPACING.l,
     },
     header: {
         alignItems: 'center',
-        marginBottom: 48,
+        marginBottom: SPACING.xxl,
     },
-    icon: {
-        fontSize: 64,
-        marginBottom: 16,
+    iconContainer: {
+        width: 80,
+        height: 80,
+        borderRadius: RADIUS.xl,
+        backgroundColor: COLORS.primaryLight,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: SPACING.m,
+        ...SHADOWS.small,
     },
     title: {
         fontSize: 32,
-        fontWeight: '700',
-        color: '#1F2937',
-        marginBottom: 8,
+        ...FONTS.bold,
+        color: COLORS.text,
+        marginBottom: SPACING.xs,
+        letterSpacing: -0.5,
     },
     subtitle: {
         fontSize: 16,
-        color: '#6B7280',
+        ...FONTS.regular,
+        color: COLORS.textSecondary,
     },
     roleContainer: {
-        marginBottom: 32,
+        marginBottom: SPACING.xl,
     },
     roleLabel: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#374151',
-        marginBottom: 16,
+        fontSize: 14,
+        ...FONTS.semibold,
+        color: COLORS.textSecondary,
+        marginBottom: SPACING.m,
         textAlign: 'center',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
     },
     roleButtons: {
         flexDirection: 'row',
-        gap: 12,
+        gap: SPACING.m,
     },
     roleButton: {
         flex: 1,
-        backgroundColor: '#fff',
-        borderRadius: 16,
-        padding: 20,
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.l,
+        padding: SPACING.l,
         alignItems: 'center',
         borderWidth: 2,
-        borderColor: '#E5E7EB',
+        borderColor: COLORS.border,
+        ...SHADOWS.small,
     },
     roleButtonActive: {
-        borderColor: '#5B68DF',
-        backgroundColor: '#EEF2FF',
+        borderColor: COLORS.primary,
+        backgroundColor: COLORS.infoBg,
+        ...SHADOWS.medium,
     },
-    roleIcon: {
-        fontSize: 32,
-        marginBottom: 8,
+    roleIconContainer: {
+        width: 48,
+        height: 48,
+        borderRadius: RADIUS.full,
+        backgroundColor: COLORS.background,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: SPACING.s,
+    },
+    roleIconContainerActive: {
+        backgroundColor: COLORS.surface,
     },
     roleText: {
         fontSize: 16,
-        fontWeight: '600',
-        color: '#6B7280',
+        ...FONTS.medium,
+        color: COLORS.textSecondary,
     },
     roleTextActive: {
-        color: '#5B68DF',
+        color: COLORS.primaryDark,
+        ...FONTS.semibold,
     },
     loginButton: {
-        backgroundColor: '#5B68DF',
-        borderRadius: 12,
-        padding: 16,
+        backgroundColor: COLORS.primary,
+        borderRadius: RADIUS.m,
+        padding: SPACING.m,
         alignItems: 'center',
-        marginBottom: 24,
+        marginBottom: SPACING.xl,
+        ...SHADOWS.medium,
+    },
+    loginButtonContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     loginButtonDisabled: {
-        backgroundColor: '#9CA3AF',
+        backgroundColor: COLORS.textLight,
+        ...SHADOWS.small,
     },
     loginButtonText: {
-        color: '#fff',
+        color: COLORS.surface,
         fontSize: 16,
-        fontWeight: '600',
+        ...FONTS.semibold,
+    },
+    footerContainer: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     footer: {
         textAlign: 'center',
-        color: '#9CA3AF',
+        color: COLORS.textLight,
         fontSize: 12,
+        ...FONTS.medium,
     },
 });

@@ -1,0 +1,76 @@
+{
+    "resourceType": "Consent",
+    "id": "consent-zk-example",
+    "meta": {
+        "profile": [
+            "http://zkguardian.io/fhir/StructureDefinition/zk-consent"
+        ]
+    },
+    "status": "active",
+    "scope": {
+        "coding": [
+            {
+                "system": "http://terminology.hl7.org/CodeSystem/consentscope",
+                "code": "patient-privacy"
+            }
+        ]
+    },
+    "category": [
+        {
+            "coding": [
+                {
+                    "system": "http://loinc.org",
+                    "code": "59284-0",
+                    "display": "Consent Document"
+                }
+            ]
+        }
+    ],
+    "patient": {
+        "reference": "Patient/patient-123"
+    },
+    "dateTime": "2026-01-05T00:00:00Z",
+    "provision": {
+        "type": "permit",
+        "period": {
+            "start": "2026-01-01T00:00:00Z",
+            "end": "2026-12-31T23:59:59Z"
+        },
+        "actor": [
+            {
+                "role": {
+                    "coding": [
+                        {
+                            "system": "http://terminology.hl7.org/CodeSystem/v3-ParticipationType",
+                            "code": "PRCP"
+                        }
+                    ]
+                },
+                "reference": {
+                    "reference": "Practitioner/dr-smith"
+                }
+            }
+        ],
+        "class": [
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "laboratory"
+            },
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "vital-signs"
+            }
+        ],
+        "provision": [
+            {
+                "type": "deny",
+                "class": [
+                    {
+                        "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                        "code": "medications"
+                    }
+                ]
+            }
+        ]
+    }
+}

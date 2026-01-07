@@ -1,0 +1,68 @@
+{
+    "resourceType": "StructureDefinition",
+    "id": "zk-guardian-consent",
+    "url": "http://zkguardian.io/fhir/StructureDefinition/zk-consent",
+    "version": "1.0.0",
+    "name": "ZKGuardianConsent",
+    "title": "ZK Guardian Privacy Consent",
+    "status": "active",
+    "kind": "resource",
+    "abstract": false,
+    "type": "Consent",
+    "baseDefinition": "http://hl7.org/fhir/StructureDefinition/Consent",
+    "derivation": "constraint",
+    "differential": {
+        "element": [
+            {
+                "id": "Consent.scope",
+                "path": "Consent.scope",
+                "fixedCodeableConcept": {
+                    "coding": [
+                        {
+                            "system": "http://terminology.hl7.org/CodeSystem/consentscope",
+                            "code": "patient-privacy"
+                        }
+                    ]
+                }
+            },
+            {
+                "id": "Consent.category",
+                "path": "Consent.category",
+                "slicing": {
+                    "discriminator": [
+                        {
+                            "type": "value",
+                            "path": "coding.code"
+                        }
+                    ],
+                    "rules": "open"
+                },
+                "min": 1
+            },
+            {
+                "id": "Consent.provision.type",
+                "path": "Consent.provision.type",
+                "min": 1,
+                "binding": {
+                    "strength": "required",
+                    "valueSet": "http://hl7.org/fhir/ValueSet/consent-provision-type"
+                }
+            },
+            {
+                "id": "Consent.provision.period",
+                "path": "Consent.provision.period",
+                "min": 1,
+                "comment": "REQUIRED for ZK temporal validity checks"
+            },
+            {
+                "id": "Consent.provision.class",
+                "path": "Consent.provision.class",
+                "comment": "Maps to allowedResourceCategories in ZK circuit",
+                "binding": {
+                    "strength": "extensible",
+                    "valueSet": "http://zkguardian.io/fhir/ValueSet/resource-categories"
+                }
+            }
+        ]
+    }
+}

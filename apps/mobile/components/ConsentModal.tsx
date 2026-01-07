@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { consentClient } from '../services/ConsentHandshakeClient';
 import { Ionicons } from '@expo/vector-icons';
+import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../constants/Theme';
 
 interface ConsentRequest {
     requestId: string;
@@ -24,10 +25,18 @@ export function ConsentModal() {
     const [isProcessing, setIsProcessing] = useState(false);
 
     useEffect(() => {
-        // Register consent request handler
-        consentClient.onConsentRequest((req) => {
+        // Store callback reference for cleanup
+        const handleRequest = (req: ConsentRequest) => {
             setRequest(req);
-        });
+        };
+        
+        // Register consent request handler
+        consentClient.onConsentRequest(handleRequest);
+        
+        // Cleanup: clear the handler on unmount
+        return () => {
+            consentClient.onConsentRequest(null as any);
+        };
     }, []);
 
     const handleApprove = async () => {
@@ -97,12 +106,14 @@ export function ConsentModal() {
     const resourceLabel = resourceLabels[request.details.resourceType] || request.details.resourceType;
 
     return (
-        <Modal visible={true} transparent animationType="slide">
+        <Modal visible={true} transparent animationType="fade">
             <View style={styles.overlay}>
                 <View style={styles.modal}>
                     {/* Header */}
                     <View style={styles.header}>
-                        <Ionicons name="shield-checkmark" size={48} color="#4CAF50" />
+                        <View style={styles.iconContainer}>
+                            <Ionicons name="shield-checkmark" size={32} color={COLORS.success} />
+                        </View>
                         <Text style={styles.title}>Access Request</Text>
                     </View>
 
@@ -121,6 +132,7 @@ export function ConsentModal() {
 
                     {/* Timer */}
                     <View style={styles.timerContainer}>
+                        <Ionicons name="time-outline" size={16} color={COLORS.warning} style={{ marginRight: 4 }} />
                         <Text style={styles.timer}>
                             Expires in {timeRemaining}s
                         </Text>
@@ -128,31 +140,36 @@ export function ConsentModal() {
 
                     {/* Actions */}
                     {isProcessing ? (
-                        <ActivityIndicator size="large" color="#2196F3" />
+                        <ActivityIndicator size="large" color={COLORS.primary} />
                     ) : (
                         <View style={styles.actions}>
                             <TouchableOpacity
                                 style={[styles.button, styles.denyButton]}
                                 onPress={handleDeny}
+                                activeOpacity={0.8}
                             >
-                                <Ionicons name="close" size={24} color="#FFF" />
+                                <Ionicons name="close" size={20} color={COLORS.surface} />
                                 <Text style={styles.buttonText}>Deny</Text>
                             </TouchableOpacity>
 
                             <TouchableOpacity
                                 style={[styles.button, styles.approveButton]}
                                 onPress={handleApprove}
+                                activeOpacity={0.8}
                             >
-                                <Ionicons name="checkmark" size={24} color="#FFF" />
+                                <Ionicons name="checkmark" size={20} color={COLORS.surface} />
                                 <Text style={styles.buttonText}>Approve</Text>
                             </TouchableOpacity>
                         </View>
                     )}
 
                     {/* Security Note */}
-                    <Text style={styles.securityNote}>
-                        Approval requires biometric authentication
-                    </Text>
+                    <View style={styles.securityNoteContainer}>
+                        <Ionicons name="finger-print-outline" size={12} color={COLORS.textLight} style={{ marginRight: 4 }} />
+                        <Text style={styles.securityNote}>
+                            Biometric authentication required
+                        </Text>
+                    </View>
                 </View>
             </View>
         </Modal>
@@ -162,93 +179,108 @@ export function ConsentModal() {
 const styles = StyleSheet.create({
     overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        backgroundColor: 'rgba(15, 23, 42, 0.6)', // Slate-900 with opacity
         justifyContent: 'center',
         alignItems: 'center',
-        padding: 20,
+        padding: SPACING.l,
     },
     modal: {
-        backgroundColor: '#FFF',
-        borderRadius: 20,
-        padding: 24,
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.xl,
+        padding: SPACING.xl,
         width: '100%',
-        maxWidth: 400,
+        maxWidth: 360,
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 8,
+        ...SHADOWS.large,
     },
     header: {
         alignItems: 'center',
-        marginBottom: 20,
+        marginBottom: SPACING.l,
+    },
+    iconContainer: {
+        width: 64,
+        height: 64,
+        borderRadius: RADIUS.full,
+        backgroundColor: COLORS.successBg,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: SPACING.m,
     },
     title: {
-        fontSize: 24,
-        fontWeight: '700',
-        color: '#1A1A1A',
-        marginTop: 12,
+        fontSize: 20,
+        ...FONTS.bold,
+        color: COLORS.text,
     },
     content: {
         alignItems: 'center',
-        marginBottom: 20,
+        marginBottom: SPACING.l,
     },
     practitioner: {
-        fontSize: 20,
-        fontWeight: '600',
-        color: '#2196F3',
+        fontSize: 18,
+        ...FONTS.semibold,
+        color: COLORS.primary,
         textAlign: 'center',
+        marginBottom: SPACING.xs,
     },
     description: {
-        fontSize: 16,
-        color: '#666',
-        marginVertical: 8,
+        fontSize: 14,
+        ...FONTS.regular,
+        color: COLORS.textSecondary,
+        marginBottom: SPACING.xs,
     },
     resource: {
-        fontSize: 20,
-        fontWeight: '600',
-        color: '#1A1A1A',
+        fontSize: 18,
+        ...FONTS.bold,
+        color: COLORS.text,
     },
     timerContainer: {
-        backgroundColor: '#FFF3E0',
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
-        marginBottom: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: COLORS.warningBg,
+        paddingHorizontal: SPACING.m,
+        paddingVertical: SPACING.xs,
+        borderRadius: RADIUS.full,
+        marginBottom: SPACING.xl,
     },
     timer: {
-        fontSize: 14,
-        color: '#FF9800',
-        fontWeight: '600',
+        fontSize: 12,
+        color: COLORS.warning,
+        ...FONTS.medium,
     },
     actions: {
         flexDirection: 'row',
-        gap: 16,
-        marginBottom: 16,
+        gap: SPACING.m,
+        marginBottom: SPACING.l,
+        width: '100%',
     },
     button: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 32,
-        paddingVertical: 14,
-        borderRadius: 12,
-        gap: 8,
+        justifyContent: 'center',
+        paddingVertical: SPACING.m,
+        borderRadius: RADIUS.m,
+        gap: SPACING.xs,
+        ...SHADOWS.small,
     },
     approveButton: {
-        backgroundColor: '#4CAF50',
+        backgroundColor: COLORS.success,
     },
     denyButton: {
-        backgroundColor: '#F44336',
+        backgroundColor: COLORS.error,
     },
     buttonText: {
-        color: '#FFF',
-        fontSize: 16,
-        fontWeight: '600',
+        color: COLORS.surface,
+        fontSize: 14,
+        ...FONTS.semibold,
+    },
+    securityNoteContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     securityNote: {
         fontSize: 12,
-        color: '#999',
-        textAlign: 'center',
+        color: COLORS.textLight,
+        ...FONTS.regular,
     },
 });

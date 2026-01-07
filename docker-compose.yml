@@ -1,0 +1,170 @@
+# ZK Guardian - Docker Compose
+# Full stack deployment for development and production
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: zk-guardian-postgres
+    environment:
+      - POSTGRES_DB=zkguardian
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - zk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: zk-guardian-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - zk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # HAPI FHIR R4 Server
+  hapi-fhir:
+    image: hapiproject/hapi:latest
+    container_name: zk-guardian-fhir
+    ports:
+      - "8080:8080"
+    environment:
+      - spring.datasource.url=jdbc:postgresql://hapi-db:5432/hapi
+      - spring.datasource.username=admin
+      - spring.datasource.password=admin
+      - spring.datasource.driverClassName=org.postgresql.Driver
+      - spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+      - hapi.fhir.fhir_version=R4
+      - hapi.fhir.allow_external_references=true
+    depends_on:
+      hapi-db:
+        condition: service_healthy
+    networks:
+      - zk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/fhir/metadata"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # HAPI FHIR Database (separate from app DB)
+  hapi-db:
+    image: postgres:15-alpine
+    container_name: zk-guardian-hapi-db
+    environment:
+      - POSTGRES_DB=hapi
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin
+    volumes:
+      - hapi-data:/var/lib/postgresql/data
+    networks:
+      - zk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d hapi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ZK Guardian Gateway
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    container_name: zk-guardian-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/zkguardian
+      - REDIS_URL=redis://redis:6379
+      - HAPI_FHIR_URL=http://hapi-fhir:8080
+      - POLYGON_AMOY_RPC=${POLYGON_AMOY_RPC:-https://rpc-amoy.polygon.technology}
+      - AUDIT_CONTRACT_ADDRESS=${AUDIT_CONTRACT_ADDRESS}
+      - GATEWAY_PRIVATE_KEY=${GATEWAY_PRIVATE_KEY}
+      - CORS_ORIGINS=*
+      - LOG_LEVEL=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      hapi-fhir:
+        condition: service_healthy
+    networks:
+      - zk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: zk-guardian-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+    networks:
+      - zk-network
+    restart: unless-stopped
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: zk-guardian-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - zk-network
+    restart: unless-stopped
+
+networks:
+  zk-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  hapi-data:
+  prometheus-data:
+  grafana-data:

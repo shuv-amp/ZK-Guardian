@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, TextInput } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, StatusBar, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
+import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
 
 /**
  * Clinician Dashboard
@@ -10,39 +13,109 @@ import { config } from '../../config/env';
  * Interface for clinicians to request patient data access.
  */
 export default function ClinicianDashboard() {
-    const { practitionerId, logout } = useAuth();
+    const { practitionerId, logout, getAccessToken } = useAuth();
+    const router = useRouter();
     const [patientSearch, setPatientSearch] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [requestStatus, setRequestStatus] = useState<'idle' | 'loading' | 'waiting' | 'approved' | 'denied'>('idle');
+    const [statusMessage, setStatusMessage] = useState('');
+
+    // Track polling interval for cleanup
+    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Cleanup polling on unmount
+    useEffect(() => {
+        return () => {
+            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+            if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
+        };
+    }, []);
 
     const handleAccessRequest = async (resourceType: string) => {
         if (!patientSearch.trim()) return;
 
         setIsLoading(true);
+        setRequestStatus('loading');
+        setStatusMessage('Initiating Request...');
+
         try {
+            const token = await getAccessToken();
+            if (!token) {
+                setRequestStatus('denied');
+                setStatusMessage('Authentication Error - Please re-login');
+                setIsLoading(false);
+                return;
+            }
+
             const response = await fetch(`${config.GATEWAY_URL}/fhir/${resourceType}?patient=${patientSearch}`, {
                 headers: {
-                    'Authorization': `Bearer ${await getAccessToken()}`,
+                    'Authorization': `Bearer ${token}`,
                 },
             });
 
             if (response.ok) {
-                // Handle successful access
+                setRequestStatus('approved');
+                setStatusMessage('Access Granted - View Records');
                 console.log('Access granted');
             } else if (response.status === 403) {
-                // Handle consent required/denied
-                console.log('Consent required or denied');
+                // Handshake triggered
+                setRequestStatus('waiting');
+                setStatusMessage('Waiting for Patient Consent...');
+
+                // Poll for result
+                pollForConsent(resourceType, token);
+            } else if (response.status === 401) {
+                setRequestStatus('denied');
+                setStatusMessage('Session Expired - Please re-login');
+            } else {
+                setRequestStatus('denied');
+                setStatusMessage('Access Denied');
             }
         } catch (error) {
             console.error('Access request failed:', error);
+            setRequestStatus('denied');
+            setStatusMessage('Network Error - Check Connection');
         }
         setIsLoading(false);
     };
 
-    // Placeholder - would come from auth service
-    const getAccessToken = async () => 'mock-token';
+    const pollForConsent = async (resourceType: string, token: string | null) => {
+        // Clear any existing polling
+        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+        if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
+
+        pollingIntervalRef.current = setInterval(async () => {
+            try {
+                const currentToken = token || await getAccessToken();
+                if (!currentToken) return;
+
+                const response = await fetch(`${config.GATEWAY_URL}/fhir/${resourceType}?patient=${patientSearch}`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` },
+                });
+
+                if (response.ok) {
+                    if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+                    if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
+                    setRequestStatus('approved');
+                    setStatusMessage('Consent Received! Access Granted.');
+                }
+            } catch (e) {
+                // ignore errors while polling
+            }
+        }, 3000);
+
+        // Timeout after 60s
+        pollingTimeoutRef.current = setTimeout(() => {
+            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+            setRequestStatus('denied');
+            setStatusMessage('Request Timed Out - Patient did not respond');
+        }, 60000);
+    };
 
     return (
         <SafeAreaView style={styles.container}>
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
             <ScrollView contentContainerStyle={styles.scrollContent}>
                 {/* Header */}
                 <View style={styles.header}>
@@ -51,7 +124,7 @@ export default function ClinicianDashboard() {
                         <Text style={styles.practitionerId}>ID: {practitionerId}</Text>
                     </View>
                     <TouchableOpacity onPress={logout} style={styles.logoutButton}>
-                        <Ionicons name="log-out-outline" size={24} color="#666" />
+                        <Ionicons name="log-out-outline" size={24} color={COLORS.textSecondary} />
                     </TouchableOpacity>
                 </View>
 
@@ -59,16 +132,31 @@ export default function ClinicianDashboard() {
                 <View style={styles.searchSection}>
                     <Text style={styles.sectionTitle}>Patient Lookup</Text>
                     <View style={styles.searchInputContainer}>
-                        <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+                        <Ionicons name="search" size={20} color={COLORS.textSecondary} style={styles.searchIcon} />
                         <TextInput
                             style={styles.searchInput}
                             placeholder="Enter Patient ID"
                             value={patientSearch}
                             onChangeText={setPatientSearch}
-                            placeholderTextColor="#999"
+                            placeholderTextColor={COLORS.textLight}
                         />
                     </View>
                 </View>
+
+                {/* Status Indicator */}
+                {requestStatus !== 'idle' && (
+                    <View style={[styles.statusBanner,
+                    requestStatus === 'waiting' && styles.statusWaiting,
+                    requestStatus === 'loading' && styles.statusWaiting,
+                    requestStatus === 'approved' && styles.statusSuccess,
+                    requestStatus === 'denied' && styles.statusError
+                    ]}>
+                        <Text style={styles.statusBannerText}>{statusMessage}</Text>
+                        {(requestStatus === 'waiting' || requestStatus === 'loading') && (
+                            <ActivityIndicator size="small" color={COLORS.primary} style={{ marginLeft: 10 }} />
+                        )}
+                    </View>
+                )}
 
                 {/* Resource Access Buttons */}
                 <View style={styles.section}>
@@ -82,8 +170,11 @@ export default function ClinicianDashboard() {
                             style={styles.resourceCard}
                             onPress={() => handleAccessRequest('Observation')}
                             disabled={isLoading || !patientSearch}
+                            activeOpacity={0.7}
                         >
-                            <Ionicons name="flask" size={32} color="#2196F3" />
+                            <View style={[styles.resourceIcon, { backgroundColor: COLORS.primaryLight }]}>
+                                <Ionicons name="flask" size={24} color={COLORS.primary} />
+                            </View>
                             <Text style={styles.resourceLabel}>Lab Results</Text>
                         </TouchableOpacity>
 
@@ -91,8 +182,11 @@ export default function ClinicianDashboard() {
                             style={styles.resourceCard}
                             onPress={() => handleAccessRequest('DiagnosticReport')}
                             disabled={isLoading || !patientSearch}
+                            activeOpacity={0.7}
                         >
-                            <Ionicons name="image" size={32} color="#9C27B0" />
+                            <View style={[styles.resourceIcon, { backgroundColor: COLORS.infoBg }]}>
+                                <Ionicons name="image" size={24} color={COLORS.info} />
+                            </View>
                             <Text style={styles.resourceLabel}>Imaging</Text>
                         </TouchableOpacity>
 
@@ -100,8 +194,11 @@ export default function ClinicianDashboard() {
                             style={styles.resourceCard}
                             onPress={() => handleAccessRequest('MedicationRequest')}
                             disabled={isLoading || !patientSearch}
+                            activeOpacity={0.7}
                         >
-                            <Ionicons name="medkit" size={32} color="#F44336" />
+                            <View style={[styles.resourceIcon, { backgroundColor: COLORS.errorBg }]}>
+                                <Ionicons name="medkit" size={24} color={COLORS.error} />
+                            </View>
                             <Text style={styles.resourceLabel}>Medications</Text>
                         </TouchableOpacity>
 
@@ -109,8 +206,11 @@ export default function ClinicianDashboard() {
                             style={styles.resourceCard}
                             onPress={() => handleAccessRequest('Condition')}
                             disabled={isLoading || !patientSearch}
+                            activeOpacity={0.7}
                         >
-                            <Ionicons name="medical" size={32} color="#FF9800" />
+                            <View style={[styles.resourceIcon, { backgroundColor: COLORS.warningBg }]}>
+                                <Ionicons name="medical" size={24} color={COLORS.warning} />
+                            </View>
                             <Text style={styles.resourceLabel}>Diagnoses</Text>
                         </TouchableOpacity>
                     </View>
@@ -118,10 +218,43 @@ export default function ClinicianDashboard() {
 
                 {/* Compliance Notice */}
                 <View style={styles.complianceSection}>
-                    <Ionicons name="shield-checkmark" size={24} color="#1976D2" />
+                    <Ionicons name="shield-checkmark" size={24} color={COLORS.primary} />
                     <Text style={styles.complianceText}>
                         All access requests are logged on-chain using zero-knowledge proofs for HIPAA compliance.
                     </Text>
+                </View>
+
+                {/* Quick Actions */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Quick Actions</Text>
+                    <View style={styles.quickActions}>
+                        <TouchableOpacity
+                            style={styles.quickActionBtn}
+                            onPress={() => router.push('/(clinician)/records')}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="folder-open-outline" size={20} color={COLORS.primary} />
+                            <Text style={styles.quickActionText}>View Records</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={styles.quickActionBtn}
+                            onPress={() => router.push('/(clinician)/proofs')}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="checkmark-done-outline" size={20} color={COLORS.primary} />
+                            <Text style={styles.quickActionText}>Proof Status</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.quickActionBtn, styles.breakGlassBtn]}
+                            onPress={() => router.push('/(clinician)/break-glass')}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="flash-outline" size={20} color={COLORS.error} />
+                            <Text style={[styles.quickActionText, { color: COLORS.error }]}>Break-Glass</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </ScrollView>
         </SafeAreaView>
@@ -131,105 +264,167 @@ export default function ClinicianDashboard() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F5F7FA',
+        backgroundColor: COLORS.background,
     },
     scrollContent: {
-        padding: 20,
+        padding: SPACING.l,
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 24,
+        marginBottom: SPACING.xl,
     },
     greeting: {
         fontSize: 28,
-        fontWeight: '700',
-        color: '#1A1A1A',
+        ...FONTS.bold,
+        color: COLORS.text,
+        letterSpacing: -0.5,
     },
     practitionerId: {
         fontSize: 14,
-        color: '#666',
-        marginTop: 4,
+        color: COLORS.textSecondary,
+        marginTop: SPACING.xs,
+        ...FONTS.medium,
     },
     logoutButton: {
-        padding: 8,
+        padding: SPACING.s,
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.full,
+        ...SHADOWS.small,
     },
     searchSection: {
-        marginBottom: 24,
+        marginBottom: SPACING.xl,
     },
     sectionTitle: {
         fontSize: 18,
-        fontWeight: '600',
-        color: '#1A1A1A',
-        marginBottom: 12,
+        ...FONTS.semibold,
+        color: COLORS.text,
+        marginBottom: SPACING.m,
     },
     sectionDescription: {
         fontSize: 14,
-        color: '#666',
-        marginBottom: 16,
+        color: COLORS.textSecondary,
+        marginBottom: SPACING.m,
         lineHeight: 20,
+        ...FONTS.regular,
     },
     searchInputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFF',
-        borderRadius: 12,
-        paddingHorizontal: 16,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.m,
+        paddingHorizontal: SPACING.m,
+        ...SHADOWS.small,
     },
     searchIcon: {
-        marginRight: 12,
+        marginRight: SPACING.s,
     },
     searchInput: {
         flex: 1,
         height: 50,
         fontSize: 16,
-        color: '#1A1A1A',
+        color: COLORS.text,
+        ...FONTS.regular,
     },
     section: {
-        marginBottom: 24,
+        marginBottom: SPACING.xl,
     },
     resourceGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 12,
+        gap: SPACING.m,
     },
     resourceCard: {
         width: '47%',
-        backgroundColor: '#FFF',
-        borderRadius: 16,
-        padding: 20,
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.l,
+        padding: SPACING.m,
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
+        ...SHADOWS.small,
+    },
+    resourceIcon: {
+        width: 48,
+        height: 48,
+        borderRadius: RADIUS.full,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: SPACING.s,
     },
     resourceLabel: {
         fontSize: 14,
-        fontWeight: '500',
-        color: '#1A1A1A',
-        marginTop: 12,
+        ...FONTS.medium,
+        color: COLORS.text,
+        marginTop: SPACING.xs,
         textAlign: 'center',
     },
     complianceSection: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#E3F2FD',
-        borderRadius: 12,
-        padding: 16,
-        gap: 12,
+        backgroundColor: COLORS.primaryLight,
+        borderRadius: RADIUS.m,
+        padding: SPACING.m,
+        gap: SPACING.m,
     },
     complianceText: {
         flex: 1,
         fontSize: 13,
-        color: '#1565C0',
+        color: COLORS.primaryDark,
         lineHeight: 18,
+        ...FONTS.regular,
     },
+    statusBanner: {
+        marginVertical: SPACING.m,
+        padding: SPACING.m,
+        borderRadius: RADIUS.m,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    statusWaiting: {
+        backgroundColor: COLORS.warningBg,
+        borderWidth: 1,
+        borderColor: COLORS.warning,
+    },
+    statusSuccess: {
+        backgroundColor: COLORS.successBg,
+        borderWidth: 1,
+        borderColor: COLORS.success,
+    },
+    statusError: {
+        backgroundColor: COLORS.errorBg,
+        borderWidth: 1,
+        borderColor: COLORS.error,
+    },
+    statusBannerText: {
+        ...FONTS.semibold,
+        fontSize: 14,
+        color: COLORS.text,
+    },
+    quickActions: {
+        flexDirection: 'row',
+        gap: SPACING.m,
+    },
+    quickActionBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.m,
+        padding: SPACING.m,
+        gap: SPACING.xs,
+        ...SHADOWS.small,
+    },
+    quickActionText: {
+        fontSize: 12,
+        ...FONTS.medium,
+        color: COLORS.primary,
+    },
+    breakGlassBtn: {
+        backgroundColor: COLORS.errorBg,
+        borderWidth: 1,
+        borderColor: COLORS.error,
+    },
+
 });

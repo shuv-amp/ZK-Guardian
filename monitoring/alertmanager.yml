@@ -1,0 +1,178 @@
+# ZK Guardian - Alertmanager Configuration
+# Handles alert routing, notifications, and silencing
+
+global:
+  # Default SMTP settings for email notifications
+  smtp_smarthost: 'smtp.example.com:587'
+  smtp_from: 'alerts@zkguardian.example.com'
+  smtp_auth_username: '${SMTP_USERNAME}'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_require_tls: true
+
+  # Slack webhook for alerts
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+
+  # PagerDuty for critical alerts
+  pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'
+
+  # Default resolve timeout
+  resolve_timeout: 5m
+
+# Route tree for alert handling
+route:
+  # Default receiver
+  receiver: 'default-receiver'
+  
+  # Group alerts by alertname and severity
+  group_by: ['alertname', 'severity', 'component']
+  
+  # Wait time before sending first notification for group
+  group_wait: 30s
+  
+  # Wait time between notifications for same group
+  group_interval: 5m
+  
+  # Resend interval if not resolved
+  repeat_interval: 4h
+
+  # Child routes
+  routes:
+    # Critical alerts - immediate PagerDuty + Slack
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+
+    # HIPAA-related alerts - special handling
+    - match:
+        component: hipaa
+      receiver: 'compliance-team'
+      group_wait: 10s
+      repeat_interval: 30m
+      continue: true
+
+    # Security alerts
+    - match:
+        component: security
+      receiver: 'security-team'
+      group_wait: 30s
+      repeat_interval: 2h
+
+    # Blockchain/ZK alerts
+    - match_re:
+        component: (blockchain|zk-prover)
+      receiver: 'blockchain-team'
+      group_wait: 1m
+      repeat_interval: 4h
+
+    # FHIR/EHR integration alerts
+    - match:
+        component: fhir
+      receiver: 'integration-team'
+      group_wait: 1m
+
+    # Warning level - less urgent
+    - match:
+        severity: warning
+      receiver: 'slack-warnings'
+      group_wait: 5m
+      repeat_interval: 8h
+
+# Inhibition rules - suppress alerts when others are firing
+inhibit_rules:
+  # Don't alert on service-down if entire cluster is down
+  - source_match:
+      severity: 'critical'
+      alertname: 'ClusterDown'
+    target_match:
+      severity: 'warning'
+    equal: ['cluster']
+
+  # Suppress ZK prover warnings during maintenance
+  - source_match:
+      alertname: 'MaintenanceMode'
+    target_match:
+      component: 'zk-prover'
+    equal: ['instance']
+
+# Receivers define notification channels
+receivers:
+  - name: 'default-receiver'
+    email_configs:
+      - to: 'ops@zkguardian.example.com'
+        send_resolved: true
+
+  - name: 'critical-alerts'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        severity: critical
+        description: '{{ .GroupLabels.alertname }}: {{ .CommonAnnotations.summary }}'
+        details:
+          component: '{{ .GroupLabels.component }}'
+          severity: '{{ .GroupLabels.severity }}'
+          runbook: '{{ .CommonAnnotations.runbook_url }}'
+    slack_configs:
+      - channel: '#zk-guardian-critical'
+        username: 'AlertManager'
+        icon_emoji: ':rotating_light:'
+        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+        text: '{{ .CommonAnnotations.description }}'
+        send_resolved: true
+        actions:
+          - type: button
+            text: 'View Runbook'
+            url: '{{ .CommonAnnotations.runbook_url }}'
+          - type: button
+            text: 'Silence (1h)'
+            url: '{{ template "__alertmanagerURL" . }}/#/silences/new?filter=%7B{{ range .CommonLabels.SortedPairs }}{{ .Name }}%3D"{{ .Value }}"%2C{{ end }}%7D'
+
+  - name: 'compliance-team'
+    email_configs:
+      - to: 'compliance@zkguardian.example.com'
+        send_resolved: true
+        html: |
+          <h2>HIPAA Compliance Alert</h2>
+          <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+          <p><strong>Description:</strong> {{ .CommonAnnotations.description }}</p>
+          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+          <p>Please review immediately per HIPAA incident response procedures.</p>
+    slack_configs:
+      - channel: '#zk-guardian-compliance'
+        send_resolved: true
+
+  - name: 'security-team'
+    slack_configs:
+      - channel: '#zk-guardian-security'
+        username: 'SecurityBot'
+        icon_emoji: ':lock:'
+        send_resolved: true
+    webhook_configs:
+      - url: '${SECURITY_WEBHOOK_URL}'
+        send_resolved: true
+
+  - name: 'blockchain-team'
+    slack_configs:
+      - channel: '#zk-guardian-blockchain'
+        username: 'BlockchainBot'
+        icon_emoji: ':chains:'
+        send_resolved: true
+
+  - name: 'integration-team'
+    slack_configs:
+      - channel: '#zk-guardian-integrations'
+        username: 'IntegrationBot'
+        send_resolved: true
+
+  - name: 'slack-warnings'
+    slack_configs:
+      - channel: '#zk-guardian-ops'
+        username: 'AlertManager'
+        icon_emoji: ':warning:'
+        color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+        send_resolved: true
+
+# Templates for notification customization
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'

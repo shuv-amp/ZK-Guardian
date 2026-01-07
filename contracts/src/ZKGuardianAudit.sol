@@ -6,7 +6,7 @@ interface IGroth16Verifier {
         uint256[2] calldata _pA,
         uint256[2][2] calldata _pB,
         uint256[2] calldata _pC,
-        uint256[4] calldata _pubSignals
+        uint256[7] calldata _pubSignals
     ) external view returns (bool);
 }
 
@@ -30,6 +30,12 @@ contract ZKGuardianAudit {
     mapping(bytes32 => bool) public verifiedProofs;
 
     /**
+     * @dev Nullifier protection (AccessIsAllowedSecure): nullifierHash => used status.
+     *      Prevents double-spending of the same consent within a session or strictly depending on logic.
+     */
+    mapping(uint256 => bool) public usedNullifiers;
+
+    /**
      * @dev Maps Access Event Hash to block timestamp of audit.
      *      Useful for on-chain checks of "when was this accessed?".
      */
@@ -39,12 +45,15 @@ contract ZKGuardianAudit {
     event AccessAudited(
         bytes32 indexed accessEventHash,
         bytes32 indexed proofHash,
+        uint256 blindedPatientId,
+        uint256 blindedAccessHash,
         uint64 timestamp,
         address indexed auditor
     );
 
     // === Errors ===
     error ProofAlreadyUsed();
+    error NullifierAlreadyUsed();
     error InvalidProof();
     error InvalidTimestamp(uint256 proofTime, uint256 blockTime);
     error ArrayLengthMismatch();
@@ -61,29 +70,36 @@ contract ZKGuardianAudit {
      * @param _pA Proof point A
      * @param _pB Proof point B
      * @param _pC Proof point C
-     * @param _pubSignals Public signals [proofOfPolicyMatch, currentTimestamp, accessEventHash, ...]
-     *        Note: Must match the Groth16Verifier signature (uint[4]).
-     *        Index 0: proofOfPolicyMatch
-     *        Index 1: currentTimestamp
-     *        Index 2: accessEventHash
-     *        Index 3: (Implicit/Extra signal if any, often unused or '1')
+     * @param _pubSignals Public signals. MUST match AccessIsAllowedSecure output order:
+     *        [0] isValid
+     *        [1] blindedPatientId
+     *        [2] blindedAccessHash
+     *        [3] nullifierHash
+     *        [4] proofOfPolicyMatch
+     *        [5] currentTimestamp
+     *        [6] accessEventHash
      */
     function verifyAndAudit(
         uint256[2] calldata _pA,
         uint256[2][2] calldata _pB,
         uint256[2] calldata _pC,
-        uint256[4] calldata _pubSignals
+        uint256[7] calldata _pubSignals
     ) external {
         // 1. Compute Proof Hash for Replay Protection
-        // We include pubSignals in the hash to ensure strictly unique combination
+        // Include inputs to ensure uniqueness
         bytes32 proofHash = keccak256(abi.encodePacked(_pA, _pB, _pC, _pubSignals));
         if (verifiedProofs[proofHash]) {
             revert ProofAlreadyUsed();
         }
 
-        // 2. Validate Timestamp constraint (Prevent hoarding old proofs)
-        // Public Signal [1] is 'currentTimestamp' from the circuit
-        uint256 proofTimestamp = _pubSignals[1];
+        // 2. Validate Public Signals
+        // Check 1: isValid (Index 0)
+        if (_pubSignals[0] != 1) {
+            revert InvalidProof();
+        }
+
+        // Check 2: Timestamp (Index 5)
+        uint256 proofTimestamp = _pubSignals[5];
         if (
             proofTimestamp > block.timestamp + TIMESTAMP_THRESHOLD ||
             proofTimestamp < block.timestamp - TIMESTAMP_THRESHOLD
@@ -91,25 +107,30 @@ contract ZKGuardianAudit {
             revert InvalidTimestamp(proofTimestamp, block.timestamp);
         }
 
+        // Check 3: Nullifier (Index 3)
+        uint256 nullifierHash = _pubSignals[3];
+        if (usedNullifiers[nullifierHash]) {
+            revert NullifierAlreadyUsed();
+        }
+
         // 3. Verify Proof
-        // Gas optimization: Inter-contract call overhead is verified.
-        // If verifyProof returns false, it might just return false or revert depending on impl.
-        // The generated verifier returns bool.
         if (!verifier.verifyProof(_pA, _pB, _pC, _pubSignals)) {
             revert InvalidProof();
         }
 
-        // 4. Update State (Effects)
+        // 4. Update State
         verifiedProofs[proofHash] = true;
-        
-        // Public Signal [2] is 'accessEventHash' (The binding commitment)
-        bytes32 accessEventHash = bytes32(_pubSignals[2]);
+        // Access Event Hash is Index 6
+        bytes32 accessEventHash = bytes32(_pubSignals[6]);
         accessTimestamps[accessEventHash] = uint64(block.timestamp);
+        usedNullifiers[nullifierHash] = true;
 
         // 5. Emit Event
         emit AccessAudited(
             accessEventHash,
             proofHash,
+            _pubSignals[1], // blindedPatientId
+            _pubSignals[2], // blindedAccessHash
             uint64(block.timestamp),
             msg.sender
         );
@@ -122,7 +143,7 @@ contract ZKGuardianAudit {
         uint256[2][] calldata _pAs,
         uint256[2][2][] calldata _pBs,
         uint256[2][] calldata _pCs,
-        uint256[4][] calldata _pubSignals
+        uint256[7][] calldata _pubSignals
     ) external {
         uint256 len = _pAs.length;
         if (
@@ -134,8 +155,6 @@ contract ZKGuardianAudit {
         }
 
         for (uint256 i = 0; i < len; ) {
-            // Batch verification is strict: any failure reverts the entire transaction.
-            // This ensures atomic integrity for batched audit logs.
             this.verifyAndAudit(_pAs[i], _pBs[i], _pCs[i], _pubSignals[i]);
             unchecked { ++i; }
         }

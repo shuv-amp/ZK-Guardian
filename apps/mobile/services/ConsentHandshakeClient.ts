@@ -38,8 +38,15 @@ export class ConsentHandshakeClient {
     /**
      * Connects to the Gateway's WebSocket endpoint.
      * Must be called after user authentication with a valid patientId.
+     * Prevents duplicate connections - if already connected/connecting, this is a no-op.
      */
     connect(patientId: string) {
+        // Prevent duplicate connections
+        if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+            console.log('[ConsentClient] Already connected/connecting, skipping');
+            return;
+        }
+
         if (!isBackendConfigured()) {
             console.warn('[ConsentClient] Backend not configured. Skipping WebSocket connection.');
             this.updateState('error');
@@ -53,6 +60,12 @@ export class ConsentHandshakeClient {
 
     private doConnect() {
         if (!this.patientId) return;
+
+        // Guard against duplicate connect attempts during reconnection
+        if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+            console.log('[ConsentClient] Socket already active, skipping doConnect');
+            return;
+        }
 
         this.updateState('connecting');
         const wsUrl = `${config.WS_URL}?patientId=${encodeURIComponent(this.patientId)}`;
