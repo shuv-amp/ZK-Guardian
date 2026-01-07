@@ -10,12 +10,15 @@ describe("ZKGuardianAudit", function () {
     const pA = [1, 2];
     const pB = [[3, 4], [5, 6]];
     const pC = [7, 8];
-    // pubSignals: [policyMatch, timestamp, eventHash, extra]
-    const genPubSignals = (timestamp, eventHash = "0x1234") => [
-        "123456", // Policy Hash
+    // pubSignals: [isValid, blindedPatientId, blindedAccessHash, nullifierHash, proofOfPolicyMatch, currentTimestamp, accessEventHash]
+    const genPubSignals = (timestamp, eventHash = "0x1234", nullifier = "123") => [
+        "1", // isValid
+        "100", // blindedPatientId (dummy)
+        "200", // blindedAccessHash (dummy)
+        ethers.keccak256(ethers.toUtf8Bytes(nullifier)), // nullifierHash
+        "123456", // Policy Hash (proofOfPolicyMatch)
         timestamp,
         ethers.keccak256(ethers.toUtf8Bytes(eventHash)), // Access Event Hash
-        "1" // Extra
     ];
 
     beforeEach(async function () {
@@ -39,13 +42,16 @@ describe("ZKGuardianAudit", function () {
 
         await expect(audit.verifyAndAudit(pA, pB, pC, signals))
             .to.emit(audit, "AccessAudited")
-            .withArgs(signals[2], ethers.keccak256(ethers.solidityPacked(
-                ["uint256[2]", "uint256[2][2]", "uint256[2]", "uint256[4]"],
+            .withArgs(signals[6], ethers.verifyMessage ? ethers.keccak256(ethers.solidityPacked( // wait, ethers.verifyMessage is for signatures, we just need the hash
+                ["uint256[2]", "uint256[2][2]", "uint256[2]", "uint256[7]"],
                 [pA, pB, pC, signals]
-            )), nextTime, owner.address);
+            )) : ethers.keccak256(ethers.solidityPacked(
+                ["uint256[2]", "uint256[2][2]", "uint256[2]", "uint256[7]"],
+                [pA, pB, pC, signals]
+            )), signals[1], signals[2], nextTime, owner.address);
 
         // Check storage
-        const storedTime = await audit.accessTimestamps(signals[2]);
+        const storedTime = await audit.accessTimestamps(signals[6]);
         expect(storedTime).to.equal(nextTime);
     });
 
@@ -102,8 +108,8 @@ describe("ZKGuardianAudit", function () {
         const nextTime = now + 1;
         await time.setNextBlockTimestamp(nextTime);
 
-        const signals1 = genPubSignals(nextTime, "event1");
-        const signals2 = genPubSignals(nextTime, "event2");
+        const signals1 = genPubSignals(nextTime, "event1", "nullifier1");
+        const signals2 = genPubSignals(nextTime, "event2", "nullifier2");
 
         const tx = await audit.batchVerifyAndAudit(
             [pA, pA],
@@ -115,7 +121,7 @@ describe("ZKGuardianAudit", function () {
         // Should emit 2 events
         await expect(tx).to.emit(audit, "AccessAudited");
         // Verify storage
-        expect(await audit.accessTimestamps(signals1[2])).to.equal(nextTime);
-        expect(await audit.accessTimestamps(signals2[2])).to.equal(nextTime);
+        expect(await audit.accessTimestamps(signals1[6])).to.equal(nextTime);
+        expect(await audit.accessTimestamps(signals2[6])).to.equal(nextTime);
     });
 });
