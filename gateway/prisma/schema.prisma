@@ -10,6 +10,92 @@ datasource db {
 }
 
 // ============================================
+// Enterprise: Tenant Management
+// ============================================
+model Tenant {
+  id            String    @id @default(uuid())
+  name          String
+  domain        String    @unique
+  config        String    // JSON: fhirEndpoint, timeout, policies
+  status        String    @default("active") // active, suspended, pending
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @map("updated_at")
+
+  apiKeys       APIKey[]
+  webhooks      WebhookEndpoint[]
+
+  @@index([domain])
+  @@index([status])
+  @@map("tenants")
+}
+
+// ============================================
+// Enterprise: API Key Authentication
+// ============================================
+model APIKey {
+  id            String    @id @default(uuid())
+  tenantId      String    @map("tenant_id")
+  name          String
+  keyPrefix     String    @map("key_prefix") // First 8 chars for identification
+  hashedKey     String    @unique @map("hashed_key")
+  scopes        String[]  // fhir:read, consent:write, audit:read, etc.
+  expiresAt     DateTime? @map("expires_at")
+  lastUsedAt    DateTime? @map("last_used_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  revokedAt     DateTime? @map("revoked_at")
+
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([keyPrefix])
+  @@map("api_keys")
+}
+
+// ============================================
+// Enterprise: Webhook System
+// ============================================
+model WebhookEndpoint {
+  id            String    @id @default(uuid())
+  tenantId      String    @map("tenant_id")
+  url           String
+  events        String[]  // consent.approved, break_glass.initiated, etc.
+  secret        String    // For HMAC-SHA256 signing
+  active        Boolean   @default(true)
+  description   String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @map("updated_at")
+
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  deliveries    WebhookDelivery[]
+
+  @@index([tenantId])
+  @@index([active])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id            String    @id @default(uuid())
+  endpointId    String    @map("endpoint_id")
+  eventType     String    @map("event_type")
+  payload       String    // JSON
+  status        String    @default("pending") // pending, delivered, failed
+  attempts      Int       @default(0)
+  responseCode  Int?      @map("response_code")
+  responseBody  String?   @map("response_body")
+  error         String?
+  nextRetryAt   DateTime? @map("next_retry_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  deliveredAt   DateTime? @map("delivered_at")
+
+  endpoint      WebhookEndpoint @relation(fields: [endpointId], references: [id])
+
+  @@index([endpointId])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@map("webhook_deliveries")
+}
+
+// ============================================
 // Core Audit Log
 // ============================================
 model AuditLog {
@@ -36,6 +122,7 @@ model AuditLog {
   @@index([clinicianId])
   @@index([accessEventHash])
   @@index([createdAt])
+  @@index([patientId, createdAt]) // Composite index for patient timeline queries
   @@map("audit_logs")
 }
 
@@ -113,6 +200,7 @@ model BreakGlassSession {
   clinicianHash       String    @map("clinician_hash")
   reasonHash          String    @map("reason_hash")
   txHash              String?   @map("tx_hash")
+  zkVerified          Boolean   @default(false) @map("zk_verified") // V2: True if ZK proof verified on-chain
   requestId           String    @map("request_id")
   createdAt           DateTime  @default(now()) @map("created_at")
 
@@ -187,4 +275,122 @@ model ProofSubmission {
   @@index([status])
   @@index([expiresAt])
   @@map("proof_submissions")
+}
+
+// ============================================
+// Compliance Reports (HIPAA §164.312(b))
+// ============================================
+model ComplianceReport {
+  id            String    @id @default(uuid())
+  reportId      String    @unique @map("report_id")
+  periodStart   DateTime  @map("period_start")
+  periodEnd     DateTime  @map("period_end")
+  data          String    // JSON blob with full report
+  compliant     Boolean   @default(false)
+  generatedBy   String?   @map("generated_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([periodStart, periodEnd])
+  @@index([compliant])
+  @@map("compliance_reports")
+}
+
+// ============================================
+// System Events (Operational Audit Trail)
+// ============================================
+model SystemEvent {
+  id            String    @id @default(uuid())
+  eventType     String    @map("event_type") // STARTUP, SHUTDOWN, CIRCUIT_VERIFIED, etc.
+  details       String?
+  severity      String    @default("INFO") // INFO, WARN, ERROR, CRITICAL
+  component     String    @default("gateway")
+  metadata      String?   // JSON
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([eventType])
+  @@index([severity])
+  @@index([createdAt])
+  @@map("system_events")
+}
+
+// ============================================
+// Identity Management: Patient Identities
+// ============================================
+model PatientIdentity {
+  id              String   @id @default(uuid())
+  fhirPatientId   String   @unique @map("fhir_patient_id")
+  blindedId       String   @map("blinded_id") // Poseidon hash, unlinkable without nullifier
+  registeredAt    DateTime @default(now()) @map("registered_at")
+  lastAccessAt    DateTime? @map("last_access_at")
+
+  @@index([fhirPatientId])
+  @@index([blindedId])
+  @@map("patient_identities")
+}
+
+// ============================================
+// Identity Management: Clinician Identities
+// ============================================
+model ClinicianIdentity {
+  id                  String   @id @default(uuid())
+  fhirPractitionerId  String   @unique @map("fhir_practitioner_id")
+  blindedId           String   @map("blinded_id")
+  credentialHash      String   @map("credential_hash") // For BreakGlass Merkle tree
+  facilityId          String   @map("facility_id")
+  licenseHash         String   @map("license_hash")
+  registeredAt        DateTime @default(now()) @map("registered_at")
+  verifiedAt          DateTime? @map("verified_at")
+  isActive            Boolean  @default(true) @map("is_active")
+
+  @@index([fhirPractitionerId])
+  @@index([credentialHash])
+  @@index([facilityId])
+  @@map("clinician_identities")
+}
+
+
+// ============================================
+// Push Notifications: Device Tokens
+// ============================================
+model DeviceToken {
+  id              String   @id @default(uuid())
+  patientId       String   @map("patient_id")
+  token           String   @unique
+  platform        String   // ios, android, web
+  lastUsedAt      DateTime @default(now()) @map("last_used_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([patientId])
+  @@map("device_tokens")
+}
+
+// ============================================
+// Patient Preferences for Access Control
+// ============================================
+model PatientPreferences {
+  id                      String    @id @default(uuid())
+  patientId               String    @unique @map("patient_id")
+  
+  // Emergency Access Control
+  allowEmergencyAccess    Boolean   @default(true) @map("allow_emergency_access")
+  
+  // Access Hours Restriction (7AM-7PM default)
+  restrictAccessHours     Boolean   @default(false) @map("restrict_access_hours")
+  accessHoursStart        Int       @default(7) @map("access_hours_start")   // 24-hour format (7 = 7AM)
+  accessHoursEnd          Int       @default(19) @map("access_hours_end")    // 24-hour format (19 = 7PM)
+  
+  // Alert Preferences
+  alertsForAfterHours     Boolean   @default(true) @map("alerts_for_after_hours")
+  alertsForNewProvider    Boolean   @default(true) @map("alerts_for_new_provider")
+  alertsForBreakGlass     Boolean   @default(true) @map("alerts_for_break_glass")
+  pushNotifications       Boolean   @default(true) @map("push_notifications")
+  
+  // Biometric
+  biometricEnabled        Boolean   @default(true) @map("biometric_enabled")
+  
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  @@index([patientId])
+  @@map("patient_preferences")
 }
