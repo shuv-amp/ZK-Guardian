@@ -1,0 +1,111 @@
+# Self-Hosted Observability Stack
+# 
+# Zero-cost monitoring with Prometheus, Grafana, and Jaeger.
+# Run: docker-compose -f docker-compose.observability.yml up -d
+
+version: '3.8'
+
+services:
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: zk-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerting-rules.yml:/etc/prometheus/alerting-rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - observability
+
+  # Grafana - Dashboards
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: zk-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-zkguardian}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - observability
+
+  # Jaeger - Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: zk-jaeger
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_VALUE=/badger/data
+      - BADGER_DIRECTORY_KEY=/badger/key
+    volumes:
+      - jaeger_data:/badger
+    restart: unless-stopped
+    networks:
+      - observability
+
+  # AlertManager - Alert routing
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: zk-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    restart: unless-stopped
+    networks:
+      - observability
+
+  # HAPI FHIR Server - Healthcare data (optional, for local dev)
+  hapi-fhir:
+    image: hapiproject/hapi:latest
+    container_name: zk-hapi-fhir
+    ports:
+      - "8080:8080"
+    environment:
+      - hapi.fhir.server_address=http://localhost:8080/fhir
+      - hapi.fhir.allow_external_references=true
+    volumes:
+      - hapi_data:/data/hapi
+    restart: unless-stopped
+    networks:
+      - observability
+    profiles:
+      - fhir  # Only start with: docker-compose --profile fhir up
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  jaeger_data:
+  alertmanager_data:
+  hapi_data:
+
+networks:
+  observability:
+    driver: bridge
