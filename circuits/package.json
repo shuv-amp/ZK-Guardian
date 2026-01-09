@@ -3,6 +3,7 @@
     "version": "0.0.1",
     "private": true,
     "description": "ZK Guardian Circom circuits",
+    "license": "Apache-2.0",
     "scripts": {
         "compile": "bash scripts/compile.sh",
         "trusted-setup": "bash scripts/trusted-setup.sh",

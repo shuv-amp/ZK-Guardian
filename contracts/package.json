@@ -3,6 +3,7 @@
     "version": "0.0.1",
     "private": true,
     "description": "ZK Guardian Solidity smart contracts",
+    "license": "Apache-2.0",
     "scripts": {
         "compile": "hardhat compile",
         "test": "hardhat test",

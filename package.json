@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "description": "Privacy-preserving healthcare audit log using zk-SNARKs and FHIR R4",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "ZK Guardian Team",
   "scripts": {
     "dev": "turbo run dev",
@@ -30,7 +30,9 @@
     "pnpm": ">=9.0.0"
   },
   "dependencies": {
+    "csv-parse": "^6.1.0",
     "dotenv": "^16.6.1",
-    "ethers": "^6.16.0"
+    "ethers": "^6.16.0",
+    "snarkjs": "^0.7.5"
   }
 }

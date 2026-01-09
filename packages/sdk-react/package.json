@@ -43,7 +43,7 @@
         "react",
         "hooks"
     ],
-    "license": "MIT",
+    "license": "Apache-2.0",
     "repository": {
         "type": "git",
         "url": "https://github.com/zk-guardian/zk-guardian.git",
