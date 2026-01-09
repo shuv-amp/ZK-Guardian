@@ -17,6 +17,7 @@ import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
 import { validateQuery, validateBody } from '../middleware/validation.js';
 import { hashFhirConsent } from '../utils/fhirToPoseidon.js';
+import { webhookService } from '../services/webhookService.js';
 
 export const consentsRouter: Router = Router({ mergeParams: true });
 
@@ -161,6 +162,14 @@ consentsRouter.post('/', validateBody(CreateConsentSchema), async (req: Request,
                 lastUpdated: cached.syncedAt.toISOString()
             }
         });
+
+        // Emit Webhook: consent.approved
+        webhookService.emit(patientId, 'consent.approved', {
+            consentId: cached.fhirConsentId,
+            patientId,
+            grantedTo: body.grantedTo,
+            validUntil: cached.validUntil.toISOString()
+        }).catch(err => logger.error({ err }, 'Failed to emit consent.approved webhook'));
 
     } catch (error: any) {
         logger.error({ error, patientId: req.params.patientId }, 'Failed to create consent');
@@ -359,6 +368,15 @@ consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), asy
             effectiveFrom: body.revokeImmediately ? revokedAt.toISOString() : cached.validUntil.toISOString(),
             blockNumber
         });
+
+        // Emit Webhook: consent.revoked
+        webhookService.emit(patientId, 'consent.revoked', {
+            consentId,
+            patientId,
+            revokedAt: revokedAt.toISOString(),
+            reason: body.reason,
+            revokeImmediately: body.revokeImmediately
+        }).catch(err => logger.error({ err }, 'Failed to emit consent.revoked webhook'));
 
     } catch (error: any) {
         logger.error({ error, consentId: req.params.consentId }, 'Failed to revoke consent');

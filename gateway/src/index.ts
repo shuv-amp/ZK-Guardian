@@ -37,6 +37,7 @@ import { metricsRouter } from './metrics/prometheus.js';
 import { logger, logSystemEvent, createRequestLogger } from './lib/logger.js';
 import { isAppError, toErrorResponse } from './lib/errors.js';
 import { complianceService } from './lib/complianceService.js';
+import { anomalyDetectionService } from './services/anomalyDetection.js';
 
 const app: Express = express();
 const server = createServer(app);
@@ -216,6 +217,10 @@ async function startup(): Promise<void> {
         webhookService.start();
         logSystemEvent({ event: 'STARTUP', details: 'Webhook delivery processor started' });
 
+        // Start anomaly detection service
+        anomalyDetectionService.start();
+        logSystemEvent({ event: 'STARTUP', details: 'Anomaly detection service started' });
+
         // Start HTTP server
         server.listen(env.PORT, '0.0.0.0', () => {
             logger.info({
@@ -257,6 +262,9 @@ async function shutdown(signal: string): Promise<void> {
     // Flush batch queue
     await batchAuditService.forceFlush();
     batchAuditService.stop();
+
+    // Stop anomaly detection
+    anomalyDetectionService.stop();
 
     // Disconnect databases
     await disconnectDatabase();

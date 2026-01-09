@@ -12,6 +12,7 @@ import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../lib/logger.js';
 import { accessRequestsCounter, consentDenialsCounter } from '../metrics/prometheus.js';
+import { webhookService } from '../services/webhookService.js';
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || 'http://localhost:8080/fhir';
 
@@ -227,9 +228,19 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
         try {
             txInfo = await submitToBlockchain(proofResult);
 
-            // Mark proof as confirmed
             await replayProtection.confirmProof(proofResult.proofHash, txInfo.txHash);
             accessRequestsCounter.inc({ resource_type: resourceType, status: 'success' });
+
+            // Emit Webhook: access.granted
+            webhookService.emit(request.patientId, 'access.granted', {
+                patientId: request.patientId,
+                clinicianId: request.clinicianId,
+                resourceType: request.resourceType,
+                resourceId: request.resourceId,
+                proofHash: proofResult.proofHash,
+                txHash: txInfo.txHash,
+                timestamp: new Date().toISOString()
+            }).catch(e => logger.error({ error: e.message }, 'Webhook emit failed'));
         } catch (blockchainError: any) {
             // Mark proof as failed so it can be retried
             await replayProtection.markFailed(proofResult.proofHash, blockchainError.message);
@@ -265,6 +276,14 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
         next();
     } catch (error: any) {
         if (error.message === 'PROOF_ALREADY_USED') {
+            // Emit Webhook: access.denied (Replay)
+            webhookService.emit(accessRequest.patientId, 'access.denied', {
+                patientId: accessRequest.patientId,
+                clinicianId: accessRequest.clinicianId,
+                reason: 'REPLAY_ATTACK',
+                proofHash: accessRequest.proofHash || 'unknown'
+            }).catch(() => { });
+
             return res.status(400).json({
                 error: 'PROOF_ALREADY_USED',
                 message: 'Replay attack detected - this proof has already been submitted'
@@ -325,6 +344,12 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
                         error: "CONSENT_DENIED",
                         message: "Patient denied access request"
                     });
+
+                    webhookService.emit(accessRequest.patientId, 'consent.denied', {
+                        patientId: accessRequest.patientId,
+                        clinicianId: accessRequest.clinicianId,
+                        resourceType: accessRequest.resourceType
+                    }).catch(() => { });
                 }
             } catch (handshakeError: any) {
                 logger.error({ error: handshakeError.message }, 'Consent handshake failed');

@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { prisma } from '../db/client.js';
 import { logger, logAccessEvent } from '../lib/logger.js';
 import {
@@ -31,6 +31,30 @@ interface AccessRecord {
     isBreakGlass: boolean;
     isVerifiedOnChain: boolean;
 }
+
+// GET /api/patient/:patientId/audit-report
+patientAuditRouter.get(
+    '/:patientId/audit-report',
+    validateParams(PatientParamsSchema),
+    async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const { patientId } = req.params;
+
+            // Generate report stream
+            const doc = await pdfService.generateAuditReport(patientId);
+
+            // Set headers for PDF download
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename=audit-report-${patientId}-${Date.now()}.pdf`);
+
+            // Send buffer
+            res.send(doc);
+
+        } catch (error) {
+            next(error);
+        }
+    }
+);
 
 // GET /api/patient/:patientId/access-history
 
