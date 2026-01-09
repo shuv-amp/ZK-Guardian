@@ -28,6 +28,11 @@ export interface ProofInputs {
     facilityId?: string;
     emergencyCode?: number;
     justificationHash?: string;
+
+    // V2 Merkle Proof Inputs
+    credentialsMerkleRoot?: string;
+    credentialPathElements?: string[];
+    credentialPathIndices?: string[];
 }
 
 export interface ProofResult {
@@ -215,7 +220,12 @@ export class ProofGenerator {
                     sessionNonce: inputs.sessionNonce,
                     currentTimestamp: inputs.timestamp,
                     accessEventHash: BigInt(0),
-                    emergencyThreshold: 1 // Minimum emergency level
+                    emergencyThreshold: 1, // Minimum emergency level
+
+                    // V2 Merkle Proof Inputs
+                    credentialsMerkleRoot: BigInt(inputs.credentialsMerkleRoot || '0'),
+                    credentialPathElements: (inputs.credentialPathElements || []).map(BigInt),
+                    credentialPathIndices: (inputs.credentialPathIndices || []).map(Number) // Indices are 0/1
                 };
 
             default:

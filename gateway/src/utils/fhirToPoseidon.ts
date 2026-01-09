@@ -271,6 +271,7 @@ export async function prepareCircuitInputs({
     patientId,
     clinicianId,
     resourceId,
+    resourceType,
     timestamp,
     patientNullifier,
     sessionNonce
@@ -279,6 +280,7 @@ export async function prepareCircuitInputs({
     patientId: string;
     clinicianId: string;
     resourceId: string;
+    resourceType: string;
     timestamp: number;
     patientNullifier: string;
     sessionNonce: string;
@@ -291,9 +293,13 @@ export async function prepareCircuitInputs({
     // 2. ID Fields
     const patientFields = splitIdToFields(patientId);
     const clinicianFields = splitIdToFields(clinicianId);
-    const resourceFields = splitIdToFields(resourceId); // Hashes the ID string first
 
-    // 3. Allowed Categories
+    // CRITICAL: Use resourceType for circuit matching, not resourceId
+    // The circuit compares resourceHash against allowedResourceCategories
+    // Both need to be Poseidon(split(hash(TYPE_NAME)))
+    const resourceTypeFields = splitIdToFields(resourceType);
+
+    // 3. Allowed Categories - these are Poseidon hashes of resource TYPE names
     const allowedCategories = await extractAllowedCategories(consent.provision);
 
     // 4. Validity Period
@@ -319,11 +325,13 @@ export async function prepareCircuitInputs({
         BigInt(validTo)
     ]));
 
-    // accessEventHash (binding) updated for AccessIsAllowedSecure (Poseidon(10))
-    // Include sessionNonce to bind proof to this specific session
+    // accessEventHash includes the actual resourceId for audit tracing
+    // CRITICAL: Must use resourceTypeFields (same as requestedResourceId) for consistency with circuit
+    // The circuit computes: Poseidon(patientId[4], requestedResourceId[4], timestamp, sessionNonce)
+    // So we must use the same fields here
     const accessEventHash = F.toString(poseidon([
         BigInt(patientFields[0]), BigInt(patientFields[1]), BigInt(patientFields[2]), BigInt(patientFields[3]),
-        BigInt(resourceFields[0]), BigInt(resourceFields[1]), BigInt(resourceFields[2]), BigInt(resourceFields[3]),
+        BigInt(resourceTypeFields[0]), BigInt(resourceTypeFields[1]), BigInt(resourceTypeFields[2]), BigInt(resourceTypeFields[3]),
         BigInt(timestamp),
         BigInt(sessionNonce)
     ]));
@@ -333,7 +341,7 @@ export async function prepareCircuitInputs({
         patientId: patientFields,
         clinicianId: clinicianFields,
         consentPolicyHash: consentHash,
-        requestedResourceId: resourceFields,
+        requestedResourceId: resourceTypeFields, // Use TYPE for category matching
         allowedResourceCategories: allowedCategories,
         validFromTimestamp: String(validFrom),
         validToTimestamp: String(validTo),
