@@ -1,16 +1,13 @@
 /**
- * Consent Management API Routes
- * 
- * Per API_REFERENCE.md - Consent Management section
- * 
- * Endpoints:
- * - GET  /api/patient/:patientId/consents - List active consents
- * - POST /api/patient/:patientId/consents - Create new consent
- * - GET  /api/patient/:patientId/consents/:consentId - Get consent details
- * - POST /api/patient/:patientId/consents/:consentId/revoke - Revoke consent
+ * Consent Management API
+ * Where patients say "Yes" or "No". Strictly patient-access only.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import { consentHandshakeService } from '../services/consentHandshake.js';
+import { consentService } from '../services/consentService.js';
+import { consentTemplateService } from '../services/consentTemplates.js';
+import { AuthorizationError, ValidationError, ResourceNotFoundError } from '../lib/errors.js';
 import { z } from 'zod';
 import axios from 'axios';
 import { ethers } from 'ethers';
@@ -56,12 +53,12 @@ const RevokeConsentSchema = z.object({
 
 // GET /api/patient/:patientId/consents
 
-consentsRouter.get('/', validateQuery(ListConsentsQuerySchema), async (req: Request, res: Response) => {
+consentsRouter.get('/', validateQuery(ListConsentsQuerySchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { patientId } = req.params;
         const query = req.query as unknown as z.infer<typeof ListConsentsQuerySchema>;
 
-        // Authorization check: patient can only see their own consents
+        // Security: Patient can only view their own data.
         const smartContext = req.smartContext;
         if (smartContext?.patient && smartContext.patient !== patientId && !smartContext.practitioner) {
             return res.status(403).json({
@@ -119,16 +116,13 @@ consentsRouter.get('/', validateQuery(ListConsentsQuerySchema), async (req: Requ
 
     } catch (error: any) {
         logger.error({ error, patientId: req.params.patientId }, 'Failed to list consents');
-        res.status(500).json({
-            error: 'INTERNAL_ERROR',
-            message: 'Failed to list consents'
-        });
+        next(error);
     }
 });
 
 // POST /api/patient/:patientId/consents
 
-consentsRouter.post('/', validateBody(CreateConsentSchema), async (req: Request, res: Response) => {
+consentsRouter.post('/', validateBody(CreateConsentSchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { patientId } = req.params;
         const body = req.body as z.infer<typeof CreateConsentSchema>;
@@ -142,128 +136,41 @@ consentsRouter.post('/', validateBody(CreateConsentSchema), async (req: Request,
             });
         }
 
-        // Build FHIR Consent resource
-        const consentId = `consent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const now = new Date().toISOString();
-
-        const fhirConsent = {
-            resourceType: 'Consent',
-            id: consentId,
-            status: 'active',
-            scope: {
-                coding: [{
-                    system: 'http://terminology.hl7.org/CodeSystem/consentscope',
-                    code: 'patient-privacy',
-                    display: 'Privacy Consent'
-                }]
-            },
-            category: [{
-                coding: [{
-                    system: 'http://loinc.org',
-                    code: '59284-0',
-                    display: 'Consent Document'
-                }]
-            }],
-            patient: { reference: `Patient/${patientId}` },
-            dateTime: now,
-            performer: [{ reference: `Patient/${patientId}` }],
-            organization: body.grantedTo.type === 'Organization' 
-                ? [{ reference: body.grantedTo.reference }]
-                : undefined,
-            provision: {
-                type: 'permit',
-                period: {
-                    start: body.validPeriod.start,
-                    end: body.validPeriod.end
-                },
-                actor: [{
-                    role: {
-                        coding: [{
-                            system: 'http://terminology.hl7.org/CodeSystem/v3-ParticipationType',
-                            code: 'PRCP',
-                            display: 'primary recipient'
-                        }]
-                    },
-                    reference: { reference: body.grantedTo.reference }
-                }],
-                class: body.allowedCategories.map((cat: string) => ({
-                    system: 'http://hl7.org/fhir/resource-types',
-                    code: cat
-                })),
-                provision: (body.deniedCategories ?? []).length > 0 ? [{
-                    type: 'deny',
-                    class: (body.deniedCategories ?? []).map((cat: string) => ({
-                        system: 'http://hl7.org/fhir/resource-types',
-                        code: cat
-                    }))
-                }] : undefined,
-                purpose: body.purpose ? [{
-                    system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason',
-                    code: 'TREAT',
-                    display: body.purpose
-                }] : undefined
-            }
-        };
-
-        // Create in FHIR server
-        try {
-            await axios.put(
-                `${HAPI_FHIR_URL}/Consent/${consentId}`,
-                fhirConsent,
-                { headers: { 'Content-Type': 'application/fhir+json' } }
-            );
-        } catch (fhirError: any) {
-            logger.error({ error: fhirError.response?.data || fhirError.message }, 'FHIR consent creation failed');
-            return res.status(502).json({
-                error: 'FHIR_ERROR',
-                message: 'Failed to create consent in FHIR server'
-            });
-        }
-
-        // Compute consent hash for ZK proofs
-        const consentHash = await hashFhirConsent(fhirConsent as any);
-
-        // Cache locally
-        const cached = await prisma.consentCache.create({
-            data: {
-                patientId,
-                fhirConsentId: consentId,
-                practitionerId: body.grantedTo.type === 'Practitioner' 
-                    ? body.grantedTo.reference.replace('Practitioner/', '')
-                    : null,
-                allowedCategories: body.allowedCategories,
-                deniedCategories: body.deniedCategories,
-                validFrom: new Date(body.validPeriod.start),
-                validUntil: new Date(body.validPeriod.end),
-                status: 'active'
-            }
+        // Delegate to Service. It handles the FHIR mess.
+        // Use centralized service
+        const cached = await consentService.createConsent({
+            patientId,
+            practitionerId: body.grantedTo.type === 'Practitioner'
+                ? body.grantedTo.reference.replace('Practitioner/', '')
+                : 'unknown',
+            allowedCategories: body.allowedCategories,
+            deniedCategories: body.deniedCategories,
+            validDays: Math.ceil((new Date(body.validPeriod.end).getTime() - new Date(body.validPeriod.start).getTime()) / (1000 * 60 * 60 * 24)),
+            requestorId: (req as any).smartContext?.sub || 'unknown'
         });
 
-        logger.info({ consentId, patientId }, 'Consent created');
-
         res.status(201).json({
-            id: consentId,
+            id: cached.fhirConsentId,
             status: 'active',
             grantedTo: body.grantedTo,
             allowedCategories: body.allowedCategories,
             deniedCategories: body.deniedCategories,
             validPeriod: body.validPeriod,
-            createdAt: now,
-            consentHash
+            meta: {
+                versionId: '1',
+                lastUpdated: cached.syncedAt.toISOString()
+            }
         });
 
     } catch (error: any) {
         logger.error({ error, patientId: req.params.patientId }, 'Failed to create consent');
-        res.status(500).json({
-            error: 'INTERNAL_ERROR',
-            message: 'Failed to create consent'
-        });
+        next(error);
     }
 });
 
 // GET /api/patient/:patientId/consents/:consentId
 
-consentsRouter.get('/:consentId', async (req: Request, res: Response) => {
+consentsRouter.get('/:consentId', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { patientId, consentId } = req.params;
 
@@ -282,9 +189,9 @@ consentsRouter.get('/:consentId', async (req: Request, res: Response) => {
                     `${HAPI_FHIR_URL}/Consent/${consentId}`,
                     { headers: { Accept: 'application/fhir+json' } }
                 );
-                
+
                 const fhirConsent = response.data;
-                
+
                 // Verify it belongs to this patient
                 const consentPatient = fhirConsent.patient?.reference?.replace('Patient/', '');
                 if (consentPatient !== patientId) {
@@ -331,16 +238,13 @@ consentsRouter.get('/:consentId', async (req: Request, res: Response) => {
 
     } catch (error: any) {
         logger.error({ error, consentId: req.params.consentId }, 'Failed to get consent');
-        res.status(500).json({
-            error: 'INTERNAL_ERROR',
-            message: 'Failed to get consent'
-        });
+        next(error);
     }
 });
 
 // POST /api/patient/:patientId/consents/:consentId/revoke
 
-consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), async (req: Request, res: Response) => {
+consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { patientId, consentId } = req.params;
         const body = req.body as z.infer<typeof RevokeConsentSchema>;
@@ -386,14 +290,14 @@ consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), asy
             .digest('hex');
         const consentHashBytes32 = '0x' + consentHashHex.slice(0, 64);
 
-        // Submit to blockchain if configured
-        if (env.POLYGON_AMOY_RPC && env.GATEWAY_PRIVATE_KEY && process.env.REVOCATION_CONTRACT_ADDRESS) {
+        // Blockchain Revocation. Making it official.
+        if (env.POLYGON_AMOY_RPC && env.GATEWAY_PRIVATE_KEY && env.CONSENT_REVOCATION_REGISTRY_ADDRESS) {
             try {
                 const provider = new ethers.JsonRpcProvider(env.POLYGON_AMOY_RPC);
                 const wallet = new ethers.Wallet(env.GATEWAY_PRIVATE_KEY, provider);
-                
+
                 const contract = new ethers.Contract(
-                    process.env.REVOCATION_CONTRACT_ADDRESS,
+                    env.CONSENT_REVOCATION_REGISTRY_ADDRESS,
                     ['function revokeConsent(bytes32 consentHash, string calldata reason) external'],
                     wallet
                 );
@@ -402,7 +306,7 @@ consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), asy
                     consentHashBytes32,
                     body.reason || 'Patient revoked'
                 );
-                
+
                 const receipt = await tx.wait();
                 txHash = receipt.hash;
                 blockNumber = receipt.blockNumber;
@@ -424,11 +328,11 @@ consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), asy
                     path: '/status',
                     value: 'inactive'
                 }],
-                { 
-                    headers: { 
+                {
+                    headers: {
                         'Content-Type': 'application/json-patch+json',
                         'Accept': 'application/fhir+json'
-                    } 
+                    }
                 }
             );
         } catch (fhirError: any) {
@@ -458,10 +362,59 @@ consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), asy
 
     } catch (error: any) {
         logger.error({ error, consentId: req.params.consentId }, 'Failed to revoke consent');
-        res.status(500).json({
-            error: 'INTERNAL_ERROR',
-            message: 'Failed to revoke consent'
+        next(error);
+    }
+});
+
+/**
+ * GET /api/patient/:patientId/consents/templates
+ * 
+ * List available consent templates
+ */
+consentsRouter.get('/templates', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const templates = await consentTemplateService.getTemplates();
+        res.json({ templates });
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * POST /api/patient/:patientId/consents/templates/:templateId/apply
+ * 
+ * Apply a consent template (bulk create consents)
+ */
+consentsRouter.post('/templates/:templateId/apply', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { patientId, templateId } = req.params;
+        const { clinicianId } = req.body;
+
+        if (!clinicianId) {
+            throw new ValidationError('clinicianId is required', [{ path: 'clinicianId', message: 'Required' }]);
+        }
+
+        // Validate Patient ID matches token
+        const smartContext = (req as any).smartContext;
+        if (smartContext?.patient && smartContext.patient !== patientId) {
+            throw new AuthorizationError('Token does not match patient ID');
+        }
+
+        const count = await consentTemplateService.applyTemplate(
+            patientId,
+            clinicianId,
+            templateId,
+            smartContext?.sub || 'unknown'
+        );
+
+        res.status(201).json({
+            success: true,
+            message: `Template applied successfully`,
+            consentsCreated: count
         });
+
+    } catch (error) {
+        next(error);
     }
 });
 
