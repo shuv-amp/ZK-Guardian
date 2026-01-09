@@ -3,17 +3,19 @@ pragma circom 2.1.6;
 include "circomlib/circuits/poseidon.circom";
 include "circomlib/circuits/comparators.circom";
 include "circomlib/circuits/bitify.circom";
+include "./lib/MerkleProof.circom";
 
 /**
- * BreakGlass Circuit
+ * BreakGlass Circuit V2
  * 
  * Emergency access circuit per Technical Blueprint §10.1.
- * Allows clinicians to access patient records during emergencies without
- * pre-existing consent, while still generating a ZK proof for audit compliance.
+ * V2 Enhancement: Adds Merkle proof verification for clinician credentials
+ * against an on-chain CredentialRegistry.
  * 
  * HIPAA Compliance:
  * - Emergency access is logged with justification
  * - Patient identity remains protected via blinding
+ * - Clinician credentials verified against authorized registry
  * - Proof can be verified post-hoc for compliance review
  * 
  * Use Cases:
@@ -21,7 +23,7 @@ include "circomlib/circuits/bitify.circom";
  * - Critical lab results requiring immediate intervention
  * - Natural disaster situations
  */
-template BreakGlass(maxReasonLength) {
+template BreakGlass(maxReasonLength, merkleTreeLevels) {
     // --- Private Inputs ---
     signal input patientId[4];              // 256-bit patient ID (4x64 chunks)
     signal input clinicianId[4];            // 256-bit clinician ID
@@ -34,10 +36,15 @@ template BreakGlass(maxReasonLength) {
     signal input clinicianNullifier;        // Clinician's secret for blinding
     signal input sessionNonce;              // Per-access randomness
     
+    // --- Merkle Proof Inputs (V2: Credential Verification) ---
+    signal input credentialPathElements[merkleTreeLevels]; // Merkle proof siblings
+    signal input credentialPathIndices[merkleTreeLevels];  // 0=left, 1=right
+    
     // --- Public Inputs ---
     signal input currentTimestamp;          // When access occurred
     signal input accessEventHash;           // Unique audit binding
     signal input emergencyThreshold;        // Minimum emergency level (0-4)
+    signal input credentialsMerkleRoot;     // V2: On-chain root from CredentialRegistry
     
     // --- Public Outputs ---
     signal output isValid;
@@ -57,9 +64,10 @@ template BreakGlass(maxReasonLength) {
     signal emergencyValid <== emergencyCheck.out;
 
     // ============================================
-    // 2. Verify Clinician Credentials
+    // 2. Compute Credential Hash
     // ============================================
-    // Prove clinician has valid license linked to facility
+    // Same computation as CredentialRegistry.sol expects
+    // credentialHash = Poseidon(clinicianId[4], clinicianLicense[4], facilityId[0])
     component credentialHasher = Poseidon(9);
     for (var i = 0; i < 4; i++) {
         credentialHasher.inputs[i] <== clinicianId[i];
@@ -67,14 +75,22 @@ template BreakGlass(maxReasonLength) {
     }
     credentialHasher.inputs[8] <== facilityId[0];
     signal credentialHash <== credentialHasher.out;
-    
-    // Credential must be non-zero (valid)
-    component credentialValid = IsZero();
-    credentialValid.in <== credentialHash;
-    signal hasCredentials <== 1 - credentialValid.out;
 
     // ============================================
-    // 3. Generate Blinded Identifiers
+    // 3. Verify Credential Merkle Membership (V2)
+    // ============================================
+    // Proves credentialHash is in the Merkle tree rooted at credentialsMerkleRoot
+    component merkleVerifier = MerkleProof(merkleTreeLevels);
+    merkleVerifier.leaf <== credentialHash;
+    merkleVerifier.root <== credentialsMerkleRoot;
+    for (var i = 0; i < merkleTreeLevels; i++) {
+        merkleVerifier.pathElements[i] <== credentialPathElements[i];
+        merkleVerifier.pathIndices[i] <== credentialPathIndices[i];
+    }
+    signal credentialValid <== merkleVerifier.valid;
+
+    // ============================================
+    // 4. Generate Blinded Identifiers
     // ============================================
     // Blinded clinician ID for audit without exposure
     component blindedClinicianHasher = Poseidon(6);
@@ -95,7 +111,7 @@ template BreakGlass(maxReasonLength) {
     blindedPatientId <== blindedPatientHasher.out;
 
     // ============================================
-    // 4. Verify Access Event Binding
+    // 5. Verify Access Event Binding
     // ============================================
     // Prevents replay attacks
     component accessHasher = Poseidon(11);
@@ -109,7 +125,7 @@ template BreakGlass(maxReasonLength) {
     accessEventHash === accessHasher.out;
 
     // ============================================
-    // 5. Generate Emergency Access Hash
+    // 6. Generate Emergency Access Hash
     // ============================================
     // Unique identifier for this emergency access event
     component emergencyHasher = Poseidon(5);
@@ -121,7 +137,7 @@ template BreakGlass(maxReasonLength) {
     emergencyAccessHash <== emergencyHasher.out;
 
     // ============================================
-    // 6. Justification Commitment
+    // 7. Justification Commitment
     // ============================================
     // Links the proof to the written justification without exposing it
     component justificationCommitter = Poseidon(4);
@@ -132,14 +148,15 @@ template BreakGlass(maxReasonLength) {
     justificationCommitment <== justificationCommitter.out;
 
     // ============================================
-    // 7. Final Validity Check
+    // 8. Final Validity Check
     // ============================================
-    // Valid if: emergency level met AND clinician has credentials
-    isValid <== emergencyValid * hasCredentials;
+    // Valid if: emergency level met AND credential is in Merkle tree
+    isValid <== emergencyValid * credentialValid;
     isValid === 1;
 }
 
-// Emergency justification can be up to 256 characters (hashed)
-// Public inputs: currentTimestamp, accessEventHash, emergencyThreshold
+// 256 char justification, 16-level Merkle tree (supports up to 65,536 credentials)
+// Public inputs: currentTimestamp, accessEventHash, emergencyThreshold, credentialsMerkleRoot
 // Public outputs: isValid, blindedClinicianId, blindedPatientId, emergencyAccessHash, justificationCommitment
-component main {public [currentTimestamp, accessEventHash, emergencyThreshold]} = BreakGlass(256);
+component main {public [currentTimestamp, accessEventHash, emergencyThreshold, credentialsMerkleRoot]} = BreakGlass(256, 16);
+
