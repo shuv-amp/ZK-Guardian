@@ -16,7 +16,6 @@ build/
 *.tsbuildinfo
 
 # ZK Circuit artifacts (large files)
-# ZK Circuit artifacts (large files)
 circuits/build/*.ptau
 circuits/build/*.zkey
 circuits/build/*.wasm
@@ -66,4 +65,5 @@ pnpm-debug.log*
 # Heroku
 .heroku/
 
+# Misc
 data_flow.md

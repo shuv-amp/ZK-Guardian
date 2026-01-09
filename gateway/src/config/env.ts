@@ -59,11 +59,25 @@ const envSchema = z.object({
 
     // Logging
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+    LOG_FILE: z.string().optional(),
+    LOG_RETENTION_DAYS: z.coerce.number().default(14),
 
     // Features
     PROMETHEUS_ENABLED: z.coerce.boolean().default(true),
     BATCH_INTERVAL_MS: z.coerce.number().default(300000), // 5 minutes
-    BATCH_SIZE: z.coerce.number().default(10)
+    BATCH_SIZE: z.coerce.number().default(10),
+
+    // === New: Tracing & Keys ===
+    JAEGER_ENDPOINT: z.string().url().optional(),
+    KEY_MASTER_PASSWORD: z.string().optional(),
+
+    // Circuit integrity checksums (optional, for production verification)
+    CIRCUIT_WASM_SHA256: z.string().optional(),
+    CIRCUIT_ZKEY_SHA256: z.string().optional(),
+
+    // Feature flags
+    ENABLE_TRACING: z.coerce.boolean().default(false),
+    ENABLE_WORKER_POOL: z.coerce.boolean().default(false)
 });
 
 function loadEnv() {

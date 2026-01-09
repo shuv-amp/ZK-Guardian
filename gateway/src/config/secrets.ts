@@ -23,7 +23,7 @@ const scryptAsync = promisify(scrypt);
 
 // Types
 
-export type SecretType = 
+export type SecretType =
     | 'GATEWAY_PRIVATE_KEY'
     | 'DEPLOYER_PRIVATE_KEY'
     | 'JWT_SECRET'
@@ -87,7 +87,7 @@ class SecretsManager {
 
         // Fetch from backend
         const secret = await this.fetchSecret(type);
-        
+
         // Cache the encrypted value
         this.cache.set(type, {
             value: this.encrypt(secret.value),
@@ -105,7 +105,7 @@ class SecretsManager {
     async checkWalletBalance(): Promise<{ address: string; balance: string; isLow: boolean }> {
         try {
             const { ethers } = await import('ethers');
-            
+
             const privateKey = await this.getSecret('GATEWAY_PRIVATE_KEY');
             const rpcUrl = env.POLYGON_AMOY_RPC;
 
@@ -122,9 +122,9 @@ class SecretsManager {
             const isLow = parseFloat(balanceInMatic) < 0.1;
 
             if (isLow) {
-                logger.warn({ 
-                    address: wallet.address, 
-                    balance: balanceInMatic 
+                logger.warn({
+                    address: wallet.address,
+                    balance: balanceInMatic
                 }, 'Gateway wallet balance is low');
             }
 
@@ -174,26 +174,66 @@ class SecretsManager {
 
     /**
      * Fetch secret from backend
-     * Currently supports: environment variables
-     * Future support: HashiCorp Vault, AWS Secrets Manager
+     * Supports: HashiCorp Vault, AWS Secrets Manager, Environment Variables
      */
     private async fetchSecret(type: SecretType): Promise<{ value: string; metadata: SecretMetadata }> {
         // 1. Try HashiCorp Vault (if configured)
         if (process.env.VAULT_ADDR && process.env.VAULT_TOKEN) {
-            // Placeholder for Vault implementation
-            // const vault = require('node-vault')({ endpoint: process.env.VAULT_ADDR, token: process.env.VAULT_TOKEN });
-            // const result = await vault.read(`secret/data/${type}`);
-            // return { value: result.data.data.value, metadata: result.data.metadata };
-            logger.warn('Vault configured but not implemented, falling back to env');
+            try {
+                const vault = (await import('node-vault')).default({
+                    endpoint: process.env.VAULT_ADDR,
+                    token: process.env.VAULT_TOKEN
+                });
+
+                const secretPath = process.env.VAULT_SECRET_PATH || 'secret/data/zk-guardian';
+                const result = await vault.read(`${secretPath}/${type}`);
+
+                if (result?.data?.data?.value) {
+                    logger.info({ secretType: type }, 'Secret fetched from Vault');
+                    return {
+                        value: result.data.data.value,
+                        metadata: {
+                            version: result.data.metadata?.version,
+                            rotatedAt: result.data.metadata?.created_time
+                                ? new Date(result.data.metadata.created_time)
+                                : undefined
+                        }
+                    };
+                }
+            } catch (error: any) {
+                logger.warn({ err: error, secretType: type }, 'Vault fetch failed, trying next backend');
+            }
         }
 
         // 2. Try AWS Secrets Manager (if configured)
         if (process.env.AWS_REGION && (process.env.AWS_SECRET_ID || process.env.AWS_SECRETS_PREFIX)) {
-            // Placeholder for AWS Secrets Manager
-            // const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
-            // const response = await client.send(new GetSecretValueCommand({ SecretId: type }));
-            // return { value: response.SecretString, metadata: {} };
-            logger.warn('AWS Secrets Manager configured but not implemented, falling back to env');
+            try {
+                const { SecretsManagerClient, GetSecretValueCommand } = await import('@aws-sdk/client-secrets-manager');
+
+                const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
+                const secretId = process.env.AWS_SECRETS_PREFIX
+                    ? `${process.env.AWS_SECRETS_PREFIX}/${type}`
+                    : process.env.AWS_SECRET_ID || type;
+
+                const response = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
+
+                if (response.SecretString) {
+                    // Handle JSON secrets (multiple keys in one secret)
+                    try {
+                        const secrets = JSON.parse(response.SecretString);
+                        if (secrets[type]) {
+                            logger.info({ secretType: type }, 'Secret fetched from AWS Secrets Manager');
+                            return { value: secrets[type], metadata: {} };
+                        }
+                    } catch {
+                        // Not JSON, use as-is
+                        logger.info({ secretType: type }, 'Secret fetched from AWS Secrets Manager');
+                        return { value: response.SecretString, metadata: {} };
+                    }
+                }
+            } catch (error: any) {
+                logger.warn({ err: error, secretType: type }, 'AWS Secrets Manager fetch failed, trying next backend');
+            }
         }
 
         // 3. Fallback to Environment Variables
@@ -232,12 +272,12 @@ class SecretsManager {
 
         const iv = randomBytes(16);
         const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, iv);
-        
+
         let encrypted = cipher.update(value, 'utf8', 'hex');
         encrypted += cipher.final('hex');
-        
+
         const authTag = cipher.getAuthTag();
-        
+
         // Combine iv + authTag + encrypted
         return iv.toString('hex') + authTag.toString('hex') + encrypted;
     }
@@ -254,13 +294,13 @@ class SecretsManager {
             const iv = Buffer.from(encryptedValue.slice(0, 32), 'hex');
             const authTag = Buffer.from(encryptedValue.slice(32, 64), 'hex');
             const encrypted = encryptedValue.slice(64);
-            
+
             const decipher = createDecipheriv('aes-256-gcm', this.encryptionKey, iv);
             decipher.setAuthTag(authTag);
-            
+
             let decrypted = decipher.update(encrypted, 'hex', 'utf8');
             decrypted += decipher.final('utf8');
-            
+
             return decrypted;
         } catch (error) {
             logger.error({ error }, 'Failed to decrypt secret');
@@ -305,7 +345,7 @@ export async function initializeSecrets(): Promise<void> {
 
     // Validate critical secrets exist
     const criticalSecrets: SecretType[] = ['GATEWAY_PRIVATE_KEY'];
-    
+
     for (const secret of criticalSecrets) {
         try {
             await secretsManager.getSecret(secret);

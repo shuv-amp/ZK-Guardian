@@ -95,6 +95,55 @@ export const blockchainLatencyHistogram = new Histogram({
     buckets: [1, 2, 5, 10, 20, 60]
 });
 
+// === NEW: SLO-Critical Metrics ===
+
+// Consent handshake metrics
+export const consentHandshakeCounter = new Counter({
+    name: 'consent_handshake_total',
+    help: 'Total consent handshakes',
+    labelNames: ['status'] // success, denied, timeout
+});
+
+export const consentHandshakeDuration = new Histogram({
+    name: 'consent_handshake_duration_seconds',
+    help: 'Consent handshake duration',
+    buckets: [1, 5, 10, 15, 20, 30]
+});
+
+// Nullifier replay detection
+export const nullifierReplayCounter = new Counter({
+    name: 'nullifier_replay_attempts_total',
+    help: 'Nullifier replay attempts detected'
+});
+
+// Rate limit exceeded counter
+export const rateLimitCounter = new Counter({
+    name: 'rate_limit_exceeded_total',
+    help: 'Rate limit exceeded events',
+    labelNames: ['endpoint_type']
+});
+
+// Authentication failures
+export const authFailureCounter = new Counter({
+    name: 'auth_failure_total',
+    help: 'Authentication failures',
+    labelNames: ['reason']
+});
+
+// Circuit integrity gauge (1 = valid, 0 = invalid)
+export const circuitIntegrityGauge = new Gauge({
+    name: 'circuit_checksum_valid',
+    help: 'Circuit file integrity (1=valid, 0=invalid)',
+    labelNames: ['circuit']
+});
+
+// Proof verification results
+export const proofVerificationCounter = new Counter({
+    name: 'zk_proof_verification_total',
+    help: 'Proof verification results',
+    labelNames: ['result'] // success, failed
+});
+
 // Export grouped object for easier imports
 export const prometheusMetrics = {
     proofGenerationHistogram,
@@ -107,7 +156,15 @@ export const prometheusMetrics = {
     fhirLatencyHistogram,
     alertsGauge,
     blockchainTransactions: blockchainTransactionsCounter,
-    blockchainLatency: blockchainLatencyHistogram
+    blockchainLatency: blockchainLatencyHistogram,
+    // New metrics
+    consentHandshake: consentHandshakeCounter,
+    consentHandshakeDuration,
+    nullifierReplay: nullifierReplayCounter,
+    rateLimit: rateLimitCounter,
+    authFailure: authFailureCounter,
+    circuitIntegrity: circuitIntegrityGauge,
+    proofVerification: proofVerificationCounter
 };
 
 // === Metrics Router ===

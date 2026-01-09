@@ -124,4 +124,65 @@ describe("ZKGuardianAudit", function () {
         expect(await audit.accessTimestamps(signals1[6])).to.equal(nextTime);
         expect(await audit.accessTimestamps(signals2[6])).to.equal(nextTime);
     });
+
+    it("should revert if nullifier is already used (Double-Spend Protection)", async function () {
+        const now = await time.latest();
+        const nextTime = now + 1;
+        await time.setNextBlockTimestamp(nextTime);
+
+        // Use the same nullifier but different event hash
+        const signals1 = genPubSignals(nextTime, "event1", "sameNullifier");
+        await audit.verifyAndAudit(pA, pB, pC, signals1);
+
+        const nextTime2 = nextTime + 1;
+        await time.setNextBlockTimestamp(nextTime2);
+        const signals2 = genPubSignals(nextTime2, "event2", "sameNullifier");
+
+        // Should fail because same nullifier
+        await expect(
+            audit.verifyAndAudit(pA, pB, pC, signals2)
+        ).to.be.revertedWithCustomError(audit, "NullifierAlreadyUsed");
+    });
+
+    it("should revert if isValid signal is not 1", async function () {
+        const now = await time.latest();
+        const nextTime = now + 1;
+        await time.setNextBlockTimestamp(nextTime);
+
+        const signals = genPubSignals(nextTime);
+        signals[0] = "0"; // Set isValid to 0
+
+        await expect(
+            audit.verifyAndAudit(pA, pB, pC, signals)
+        ).to.be.revertedWithCustomError(audit, "InvalidProof");
+    });
+
+    it("should use less than 250,000 gas (Gas Optimization - P1)", async function () {
+        const now = await time.latest();
+        const nextTime = now + 1;
+        await time.setNextBlockTimestamp(nextTime);
+
+        const signals = genPubSignals(nextTime, "gasTest", "gasNullifier");
+
+        const tx = await audit.verifyAndAudit(pA, pB, pC, signals);
+        const receipt = await tx.wait();
+
+        // Per SECURITY_AUDIT_CHECKLIST P1: gas < 250,000
+        expect(receipt.gasUsed).to.be.lessThan(250000n);
+        console.log(`    Gas used: ${receipt.gasUsed.toString()}`);
+    });
+
+    it("should revert batch with mismatched array lengths", async function () {
+        const now = await time.latest();
+        const signals = genPubSignals(now + 1);
+
+        await expect(
+            audit.batchVerifyAndAudit(
+                [pA, pA], // 2 elements
+                [pB],     // 1 element - mismatch
+                [pC, pC],
+                [signals, signals]
+            )
+        ).to.be.revertedWithCustomError(audit, "ArrayLengthMismatch");
+    });
 });
