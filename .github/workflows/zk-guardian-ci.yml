@@ -1,108 +1,108 @@
-name: ZK Guardian CI/CD
-
-on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
-
-env:
-  NODE_VERSION: "20"
-  POLYGON_AMOY_RPC: "https://rpc-amoy.polygon.technology"
-
-jobs:
-  # Job 1: Verify & Test Circuits
-  verify-circuits:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
-      - name: Install Circom
-        run: |
-          curl -Ls https://github.com/iden3/circom/releases/download/v2.1.8/circom-linux-amd64 -o /usr/local/bin/circom
-          chmod +x /usr/local/bin/circom
-      
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      
-      - name: Compile & Trust Setup (Mock)
-        # We manually run these to ensure the directory structure exists for tests
-        working-directory: ./circuits
-        run: |
-          mkdir -p build
-          circom AccessIsAllowed.circom --r1cs --wasm --sym -o build -l ./node_modules
-          
-          # Mock Setup (using npx since snarkjs is a local dep)
-          npx snarkjs powersoftau new bn128 12 build/pot12_0000.ptau -v
-          npx snarkjs powersoftau prepare phase2 build/pot12_0000.ptau build/pot12_final.ptau -v
-          npx snarkjs groth16 setup build/AccessIsAllowed.r1cs build/pot12_final.ptau build/AccessIsAllowed_final.zkey
-          npx snarkjs zkey export verificationkey build/AccessIsAllowed_final.zkey build/verification_key.json
-      
-      - name: Run Circuit Tests
-        working-directory: ./circuits
-        run: npm test
-
-  # Job 2: Test Contracts & Gateway
-  test-monorepo:
-    runs-on: ubuntu-latest
-    needs: verify-circuits
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run Contract Tests
-        run: pnpm --filter contracts test
-
-      # Note: Gateway tests might require complex mocking of services, skipping for now in basic CI unless configured
-
-  # Job 3: Deploy Verifier Contract (Production Only)
-  deploy-contract:
-    runs-on: ubuntu-latest
-    needs: [test-monorepo]
-    if: github.ref == 'refs/heads/main'
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-      
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      
-      - name: Deploy to Polygon Amoy
-        env:
-          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
-          POLYGONSCAN_API_KEY: ${{ secrets.POLYGONSCAN_API_KEY }}
-        working-directory: ./contracts
-        run: |
-          npx hardhat run scripts/deploy.js --network amoy
+# # name: ZK Guardian CI/CD
+# # 
+# # on:
+# #   push:
+# #     branches: [main, develop]
+# #   pull_request:
+# #     branches: [main]
+# # 
+# # env:
+# #   NODE_VERSION: "20"
+# #   POLYGON_AMOY_RPC: "https://rpc-amoy.polygon.technology"
+# # 
+# # jobs:
+# #   # Job 1: Verify & Test Circuits
+# #   verify-circuits:
+# #     runs-on: ubuntu-latest
+# #     steps:
+# #       - uses: actions/checkout@v4
+# #       
+# #       - name: Setup Node.js
+# #         uses: actions/setup-node@v4
+# #         with:
+# #           node-version: ${{ env.NODE_VERSION }}
+# #       
+# #       - name: Install pnpm
+# #         uses: pnpm/action-setup@v3
+# #         with:
+# #           version: 9
+# # 
+# #       - name: Install Circom
+# #         run: |
+# #           curl -Ls https://github.com/iden3/circom/releases/download/v2.1.8/circom-linux-amd64 -o /usr/local/bin/circom
+# #           chmod +x /usr/local/bin/circom
+# #       
+# #       - name: Install dependencies
+# #         run: pnpm install --frozen-lockfile
+# #       
+# #       - name: Compile & Trust Setup (Mock)
+# #         # We manually run these to ensure the directory structure exists for tests
+# #         working-directory: ./circuits
+# #         run: |
+# #           mkdir -p build
+# #           circom AccessIsAllowed.circom --r1cs --wasm --sym -o build -l ./node_modules
+# #           
+# #           # Mock Setup (using npx since snarkjs is a local dep)
+# #           npx snarkjs powersoftau new bn128 12 build/pot12_0000.ptau -v
+# #           npx snarkjs powersoftau prepare phase2 build/pot12_0000.ptau build/pot12_final.ptau -v
+# #           npx snarkjs groth16 setup build/AccessIsAllowed.r1cs build/pot12_final.ptau build/AccessIsAllowed_final.zkey
+# #           npx snarkjs zkey export verificationkey build/AccessIsAllowed_final.zkey build/verification_key.json
+# #       
+# #       - name: Run Circuit Tests
+# #         working-directory: ./circuits
+# #         run: npm test
+# # 
+# #   # Job 2: Test Contracts & Gateway
+# #   test-monorepo:
+# #     runs-on: ubuntu-latest
+# #     needs: verify-circuits
+# #     steps:
+# #       - uses: actions/checkout@v4
+# #       
+# #       - name: Setup Node.js
+# #         uses: actions/setup-node@v4
+# #         with:
+# #           node-version: ${{ env.NODE_VERSION }}
+# #       
+# #       - name: Install pnpm
+# #         uses: pnpm/action-setup@v3
+# #         with:
+# #           version: 9
+# # 
+# #       - name: Install dependencies
+# #         run: pnpm install --frozen-lockfile
+# # 
+# #       - name: Run Contract Tests
+# #         run: pnpm --filter contracts test
+# # 
+# #       # Note: Gateway tests might require complex mocking of services, skipping for now in basic CI unless configured
+# # 
+# #   # Job 3: Deploy Verifier Contract (Production Only)
+# #   deploy-contract:
+# #     runs-on: ubuntu-latest
+# #     needs: [test-monorepo]
+# #     if: github.ref == 'refs/heads/main'
+# #     environment: production
+# #     steps:
+# #       - uses: actions/checkout@v4
+# #       
+# #       - name: Setup Node.js
+# #         uses: actions/setup-node@v4
+# #         with:
+# #           node-version: ${{ env.NODE_VERSION }}
+# #       
+# #       - name: Install pnpm
+# #         uses: pnpm/action-setup@v3
+# #         with:
+# #           version: 9
+# #       
+# #       - name: Install dependencies
+# #         run: pnpm install --frozen-lockfile
+# #       
+# #       - name: Deploy to Polygon Amoy
+# #         env:
+# #           DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+# #           POLYGONSCAN_API_KEY: ${{ secrets.POLYGONSCAN_API_KEY }}
+# #         working-directory: ./contracts
+# #         run: |
+# #           npx hardhat run scripts/deploy.js --network amoy

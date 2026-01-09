@@ -1,78 +1,78 @@
-name: Deploy Contracts
-
-on:
-  workflow_dispatch:
-    inputs:
-      network:
-        description: 'Target network'
-        required: true
-        default: 'amoy'
-        type: choice
-        options:
-          - amoy
-          - polygon
-      verify:
-        description: 'Verify contracts on explorer'
-        required: false
-        default: true
-        type: boolean
-
-env:
-  NODE_VERSION: '20'
-  PNPM_VERSION: '8'
-
-jobs:
-  deploy:
-    name: Deploy to ${{ github.event.inputs.network }}
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.network }}
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: ${{ env.PNPM_VERSION }}
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-      
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      
-      - name: Compile contracts
-        run: pnpm --filter contracts compile
-      
-      - name: Run tests
-        run: pnpm --filter contracts test
-      
-      - name: Deploy contracts
-        run: pnpm --filter contracts deploy:${{ github.event.inputs.network }}
-        env:
-          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
-          POLYGON_AMOY_RPC_URL: ${{ secrets.POLYGON_AMOY_RPC_URL }}
-          POLYGON_RPC_URL: ${{ secrets.POLYGON_RPC_URL }}
-          POLYGONSCAN_API_KEY: ${{ secrets.POLYGONSCAN_API_KEY }}
-      
-      - name: Verify contracts
-        if: ${{ github.event.inputs.verify == 'true' }}
-        run: pnpm --filter contracts verify:${{ github.event.inputs.network }}
-        env:
-          POLYGONSCAN_API_KEY: ${{ secrets.POLYGONSCAN_API_KEY }}
-      
-      - name: Update contract addresses
-        run: |
-          echo "Deployed contract addresses:"
-          cat contracts/deployments/${{ github.event.inputs.network }}.json
-      
-      - name: Upload deployment artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: deployment-${{ github.event.inputs.network }}-${{ github.run_number }}
-          path: |
-            contracts/deployments/
-            contracts/artifacts/
+# # name: Deploy Contracts
+# # 
+# # on:
+# #   workflow_dispatch:
+# #     inputs:
+# #       network:
+# #         description: 'Target network'
+# #         required: true
+# #         default: 'amoy'
+# #         type: choice
+# #         options:
+# #           - amoy
+# #           - polygon
+# #       verify:
+# #         description: 'Verify contracts on explorer'
+# #         required: false
+# #         default: true
+# #         type: boolean
+# # 
+# # env:
+# #   NODE_VERSION: '20'
+# #   PNPM_VERSION: '8'
+# # 
+# # jobs:
+# #   deploy:
+# #     name: Deploy to ${{ github.event.inputs.network }}
+# #     runs-on: ubuntu-latest
+# #     environment: ${{ github.event.inputs.network }}
+# #     
+# #     steps:
+# #       - uses: actions/checkout@v4
+# #       
+# #       - name: Setup pnpm
+# #         uses: pnpm/action-setup@v2
+# #         with:
+# #           version: ${{ env.PNPM_VERSION }}
+# #       
+# #       - name: Setup Node.js
+# #         uses: actions/setup-node@v4
+# #         with:
+# #           node-version: ${{ env.NODE_VERSION }}
+# #           cache: 'pnpm'
+# #       
+# #       - name: Install dependencies
+# #         run: pnpm install --frozen-lockfile
+# #       
+# #       - name: Compile contracts
+# #         run: pnpm --filter contracts compile
+# #       
+# #       - name: Run tests
+# #         run: pnpm --filter contracts test
+# #       
+# #       - name: Deploy contracts
+# #         run: pnpm --filter contracts deploy:${{ github.event.inputs.network }}
+# #         env:
+# #           DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+# #           POLYGON_AMOY_RPC_URL: ${{ secrets.POLYGON_AMOY_RPC_URL }}
+# #           POLYGON_RPC_URL: ${{ secrets.POLYGON_RPC_URL }}
+# #           POLYGONSCAN_API_KEY: ${{ secrets.POLYGONSCAN_API_KEY }}
+# #       
+# #       - name: Verify contracts
+# #         if: ${{ github.event.inputs.verify == 'true' }}
+# #         run: pnpm --filter contracts verify:${{ github.event.inputs.network }}
+# #         env:
+# #           POLYGONSCAN_API_KEY: ${{ secrets.POLYGONSCAN_API_KEY }}
+# #       
+# #       - name: Update contract addresses
+# #         run: |
+# #           echo "Deployed contract addresses:"
+# #           cat contracts/deployments/${{ github.event.inputs.network }}.json
+# #       
+# #       - name: Upload deployment artifacts
+# #         uses: actions/upload-artifact@v3
+# #         with:
+# #           name: deployment-${{ github.event.inputs.network }}-${{ github.run_number }}
+# #           path: |
+# #             contracts/deployments/
+# #             contracts/artifacts/

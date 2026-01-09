@@ -1,215 +1,215 @@
-name: Deploy Gateway
-
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'gateway/**'
-      - '.github/workflows/deploy-gateway.yml'
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Target environment'
-        required: true
-        default: 'staging'
-        type: choice
-        options:
-          - staging
-          - production
-
-env:
-  NODE_VERSION: '20'
-  PNPM_VERSION: '8'
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/gateway
-
-jobs:
-  # ============================================
-  # Build and Test
-  # ============================================
-  build:
-    name: Build & Test
-    runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: zkguardian
-          POSTGRES_PASSWORD: zkguardian_test
-          POSTGRES_DB: zkguardian_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: ${{ env.PNPM_VERSION }}
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-      
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      
-      - name: Generate Prisma Client
-        run: pnpm --filter gateway exec prisma generate
-      
-      - name: Build gateway
-        run: pnpm --filter gateway build
-      
-      - name: Run tests
-        run: pnpm --filter gateway test
-        env:
-          DATABASE_URL: postgresql://zkguardian:zkguardian_test@localhost:5432/zkguardian_test
-          NODE_ENV: test
-
-  # ============================================
-  # Build Docker Image
-  # ============================================
-  docker:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    needs: build
-    permissions:
-      contents: read
-      packages: write
-    
-    outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
-      
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: ./gateway
-          file: ./gateway/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ============================================
-  # Deploy to Staging
-  # ============================================
-  deploy-staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    needs: docker
-    if: github.event.inputs.environment == 'staging' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    environment: staging
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Deploy to Railway
-        uses: bervProject/railway-deploy@v1.0.5
-        with:
-          railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: gateway-staging
-      
-      - name: Health check
-        run: |
-          sleep 30
-          curl -f ${{ secrets.STAGING_URL }}/health || exit 1
-      
-      - name: Notify Slack
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: |
-            {
-              "text": "Gateway deployed to staging",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "✅ *Gateway deployed to staging*\nCommit: `${{ github.sha }}`\nURL: ${{ secrets.STAGING_URL }}"
-                  }
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-  # ============================================
-  # Deploy to Production
-  # ============================================
-  deploy-production:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: [docker, deploy-staging]
-    if: github.event.inputs.environment == 'production'
-    environment: production
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Deploy to Railway
-        uses: bervProject/railway-deploy@v1.0.5
-        with:
-          railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: gateway-production
-      
-      - name: Health check
-        run: |
-          sleep 30
-          curl -f ${{ secrets.PRODUCTION_URL }}/health || exit 1
-      
-      - name: Run smoke tests
-        run: |
-          curl -f ${{ secrets.PRODUCTION_URL }}/health
-          curl -f ${{ secrets.PRODUCTION_URL }}/ready
-      
-      - name: Notify Slack
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: |
-            {
-              "text": "🚀 Gateway deployed to PRODUCTION",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "🚀 *Gateway deployed to PRODUCTION*\nCommit: `${{ github.sha }}`\nURL: ${{ secrets.PRODUCTION_URL }}"
-                  }
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+# # name: Deploy Gateway
+# # 
+# # on:
+# #   push:
+# #     branches: [main]
+# #     paths:
+# #       - 'gateway/**'
+# #       - '.github/workflows/deploy-gateway.yml'
+# #   workflow_dispatch:
+# #     inputs:
+# #       environment:
+# #         description: 'Target environment'
+# #         required: true
+# #         default: 'staging'
+# #         type: choice
+# #         options:
+# #           - staging
+# #           - production
+# # 
+# # env:
+# #   NODE_VERSION: '20'
+# #   PNPM_VERSION: '8'
+# #   REGISTRY: ghcr.io
+# #   IMAGE_NAME: ${{ github.repository }}/gateway
+# # 
+# # jobs:
+# #   # ============================================
+# #   # Build and Test
+# #   # ============================================
+# #   build:
+# #     name: Build & Test
+# #     runs-on: ubuntu-latest
+# #     
+# #     services:
+# #       postgres:
+# #         image: postgres:15
+# #         env:
+# #           POSTGRES_USER: zkguardian
+# #           POSTGRES_PASSWORD: zkguardian_test
+# #           POSTGRES_DB: zkguardian_test
+# #         ports:
+# #           - 5432:5432
+# #         options: >-
+# #           --health-cmd pg_isready
+# #           --health-interval 10s
+# #           --health-timeout 5s
+# #           --health-retries 5
+# #     
+# #     steps:
+# #       - uses: actions/checkout@v4
+# #       
+# #       - name: Setup pnpm
+# #         uses: pnpm/action-setup@v2
+# #         with:
+# #           version: ${{ env.PNPM_VERSION }}
+# #       
+# #       - name: Setup Node.js
+# #         uses: actions/setup-node@v4
+# #         with:
+# #           node-version: ${{ env.NODE_VERSION }}
+# #           cache: 'pnpm'
+# #       
+# #       - name: Install dependencies
+# #         run: pnpm install --frozen-lockfile
+# #       
+# #       - name: Generate Prisma Client
+# #         run: pnpm --filter gateway exec prisma generate
+# #       
+# #       - name: Build gateway
+# #         run: pnpm --filter gateway build
+# #       
+# #       - name: Run tests
+# #         run: pnpm --filter gateway test
+# #         env:
+# #           DATABASE_URL: postgresql://zkguardian:zkguardian_test@localhost:5432/zkguardian_test
+# #           NODE_ENV: test
+# # 
+# #   # ============================================
+# #   # Build Docker Image
+# #   # ============================================
+# #   docker:
+# #     name: Build Docker Image
+# #     runs-on: ubuntu-latest
+# #     needs: build
+# #     permissions:
+# #       contents: read
+# #       packages: write
+# #     
+# #     outputs:
+# #       image-tag: ${{ steps.meta.outputs.tags }}
+# #     
+# #     steps:
+# #       - uses: actions/checkout@v4
+# #       
+# #       - name: Set up Docker Buildx
+# #         uses: docker/setup-buildx-action@v3
+# #       
+# #       - name: Log in to Container Registry
+# #         uses: docker/login-action@v3
+# #         with:
+# #           registry: ${{ env.REGISTRY }}
+# #           username: ${{ github.actor }}
+# #           password: ${{ secrets.GITHUB_TOKEN }}
+# #       
+# #       - name: Extract metadata
+# #         id: meta
+# #         uses: docker/metadata-action@v5
+# #         with:
+# #           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+# #           tags: |
+# #             type=ref,event=branch
+# #             type=sha,prefix=
+# #             type=raw,value=latest,enable={{is_default_branch}}
+# #       
+# #       - name: Build and push
+# #         uses: docker/build-push-action@v5
+# #         with:
+# #           context: ./gateway
+# #           file: ./gateway/Dockerfile
+# #           push: true
+# #           tags: ${{ steps.meta.outputs.tags }}
+# #           labels: ${{ steps.meta.outputs.labels }}
+# #           cache-from: type=gha
+# #           cache-to: type=gha,mode=max
+# # 
+# #   # ============================================
+# #   # Deploy to Staging
+# #   # ============================================
+# #   deploy-staging:
+# #     name: Deploy to Staging
+# #     runs-on: ubuntu-latest
+# #     needs: docker
+# #     if: github.event.inputs.environment == 'staging' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+# #     environment: staging
+# #     
+# #     steps:
+# #       - uses: actions/checkout@v4
+# #       
+# #       - name: Deploy to Railway
+# #         uses: bervProject/railway-deploy@v1.0.5
+# #         with:
+# #           railway_token: ${{ secrets.RAILWAY_TOKEN }}
+# #           service: gateway-staging
+# #       
+# #       - name: Health check
+# #         run: |
+# #           sleep 30
+# #           curl -f ${{ secrets.STAGING_URL }}/health || exit 1
+# #       
+# #       - name: Notify Slack
+# #         uses: slackapi/slack-github-action@v1.24.0
+# #         with:
+# #           payload: |
+# #             {
+# #               "text": "Gateway deployed to staging",
+# #               "blocks": [
+# #                 {
+# #                   "type": "section",
+# #                   "text": {
+# #                     "type": "mrkdwn",
+# #                     "text": "✅ *Gateway deployed to staging*\nCommit: `${{ github.sha }}`\nURL: ${{ secrets.STAGING_URL }}"
+# #                   }
+# #                 }
+# #               ]
+# #             }
+# #         env:
+# #           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+# # 
+# #   # ============================================
+# #   # Deploy to Production
+# #   # ============================================
+# #   deploy-production:
+# #     name: Deploy to Production
+# #     runs-on: ubuntu-latest
+# #     needs: [docker, deploy-staging]
+# #     if: github.event.inputs.environment == 'production'
+# #     environment: production
+# #     
+# #     steps:
+# #       - uses: actions/checkout@v4
+# #       
+# #       - name: Deploy to Railway
+# #         uses: bervProject/railway-deploy@v1.0.5
+# #         with:
+# #           railway_token: ${{ secrets.RAILWAY_TOKEN }}
+# #           service: gateway-production
+# #       
+# #       - name: Health check
+# #         run: |
+# #           sleep 30
+# #           curl -f ${{ secrets.PRODUCTION_URL }}/health || exit 1
+# #       
+# #       - name: Run smoke tests
+# #         run: |
+# #           curl -f ${{ secrets.PRODUCTION_URL }}/health
+# #           curl -f ${{ secrets.PRODUCTION_URL }}/ready
+# #       
+# #       - name: Notify Slack
+# #         uses: slackapi/slack-github-action@v1.24.0
+# #         with:
+# #           payload: |
+# #             {
+# #               "text": "🚀 Gateway deployed to PRODUCTION",
+# #               "blocks": [
+# #                 {
+# #                   "type": "section",
+# #                   "text": {
+# #                     "type": "mrkdwn",
+# #                     "text": "🚀 *Gateway deployed to PRODUCTION*\nCommit: `${{ github.sha }}`\nURL: ${{ secrets.PRODUCTION_URL }}"
+# #                   }
+# #                 }
+# #               ]
+# #             }
+# #         env:
+# #           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
