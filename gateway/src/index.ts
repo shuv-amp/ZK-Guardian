@@ -17,18 +17,26 @@ import { healthRouter } from './routes/health.js';
 import { fhirRouter } from './routes/fhir.js';
 import { patientAuditRouter } from './routes/patientAudit.js';
 import { consentsRouter } from './routes/consents.js';
+import { notificationsRouter } from './routes/notifications.js';
 import { breakGlassRouter } from './routes/breakGlass.js';
 import { clinicianRouter } from './routes/clinician.js';
 import { smartConfigRouter } from './routes/smartConfig.js';
 import { oauthRouter } from './routes/oauth.js';
+import { identityRouter } from './routes/identity.js';
+import { complianceRouter } from './routes/compliance.js';
+import { adminRouter } from './routes/admin.js';
 import { smartAuthMiddleware } from './middleware/smartAuth.js';
 import { breakGlassMiddleware } from './middleware/breakGlass.js';
 import { rateLimitMiddleware } from './middleware/rateLimit.js';
+import { apiKeyAuth, flexibleAuth } from './middleware/apiKeyAuth.js';
+import { tenantMiddleware } from './middleware/tenantMiddleware.js';
 import { setupConsentWebSocket } from './services/consentHandshake.js';
 import { batchAuditService } from './services/batchAuditService.js';
+import { webhookService } from './services/webhookService.js';
 import { metricsRouter } from './metrics/prometheus.js';
 import { logger, logSystemEvent, createRequestLogger } from './lib/logger.js';
 import { isAppError, toErrorResponse } from './lib/errors.js';
+import { complianceService } from './lib/complianceService.js';
 
 const app: Express = express();
 const server = createServer(app);
@@ -71,6 +79,7 @@ app.use('/metrics', metricsRouter);
 app.use('/.well-known', smartConfigRouter);
 console.log('[DEBUG] Mounting OAuth Routes at /oauth');
 app.use('/oauth', oauthRouter);
+app.use('/api/auth', identityRouter); // Mount identity reset at /api/auth/reset-identity
 
 // Authenticated Routes
 
@@ -80,14 +89,30 @@ app.use('/fhir', smartAuthMiddleware, breakGlassMiddleware, fhirRouter);
 // Patient audit dashboard
 app.use('/api/patient', smartAuthMiddleware, patientAuditRouter);
 
+// Patient preferences
+import { patientPreferencesRouter } from './routes/patientPreferences.js';
+app.use('/api/patient', smartAuthMiddleware, patientPreferencesRouter);
+
 // Consent management API (mounted under patient routes with mergeParams)
 app.use('/api/patient/:patientId/consents', smartAuthMiddleware, consentsRouter);
+
+// Notification Management
+app.use('/api/patient/notifications', smartAuthMiddleware, notificationsRouter);
 
 // Clinician dashboard
 app.use('/api/clinician', smartAuthMiddleware, clinicianRouter);
 
 // Break-glass emergency access
 app.use('/api/break-glass', smartAuthMiddleware, breakGlassRouter);
+
+// Identity management (patient/clinician registration)
+app.use('/identity', identityRouter);
+
+// Compliance reporting (admin/compliance officer only)
+app.use('/api/compliance', smartAuthMiddleware, complianceRouter);
+
+// Admin API (API key auth required)
+app.use('/api/admin', apiKeyAuth, adminRouter);
 
 // WebSocket for Consent Handshake
 
@@ -154,9 +179,42 @@ async function startup(): Promise<void> {
             logSystemEvent({ event: 'CIRCUIT_VERIFIED', details: 'ZK circuits integrity check passed' });
         }
 
+        // Initialize tracing (if enabled)
+        if (env.ENABLE_TRACING) {
+            try {
+                const { initTracing } = await import('./lib/tracing.js');
+                initTracing();
+                logSystemEvent({ event: 'TRACING_ENABLED', details: 'OpenTelemetry tracing initialized' });
+            } catch (error: any) {
+                logger.warn({ error: error.message }, 'Tracing initialization failed - continuing without tracing');
+            }
+        }
+
+        // Initialize key management (if password provided)
+        if (env.KEY_MASTER_PASSWORD) {
+            try {
+                const { keyManager } = await import('./lib/keyManagement.js');
+                await keyManager.initialize(env.KEY_MASTER_PASSWORD);
+                logSystemEvent({ event: 'KEY_MANAGER_READY', details: 'Local key management initialized' });
+            } catch (error: any) {
+                logger.error({ error: error.message }, 'Key management initialization failed');
+                if (env.NODE_ENV === 'production') {
+                    throw error;
+                }
+            }
+        }
+
+        // Initialize compliance service
+        await complianceService.initialize();
+        logSystemEvent({ event: 'COMPLIANCE_SERVICE_READY' });
+
         // Start batch audit processor
         await batchAuditService.initialize();
         batchAuditService.start();
+
+        // Start webhook delivery processor
+        webhookService.start();
+        logSystemEvent({ event: 'STARTUP', details: 'Webhook delivery processor started' });
 
         // Start HTTP server
         server.listen(env.PORT, '0.0.0.0', () => {
