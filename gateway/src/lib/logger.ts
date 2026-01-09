@@ -11,11 +11,24 @@ import pino from 'pino';
 
 const isDevelopment = process.env.NODE_ENV === 'development';
 
+// Configure transport (Console or Rotating File)
+const transport = process.env.LOG_FILE
+    ? {
+        target: 'pino-roll',
+        options: {
+            file: process.env.LOG_FILE,
+            frequency: 'daily',
+            retention: process.env.LOG_RETENTION_DAYS || 14,
+            mkdir: true
+        }
+    }
+    : isDevelopment
+        ? { target: 'pino-pretty', options: { colorize: true } }
+        : undefined;
+
 export const logger = pino({
     level: process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info'),
-    transport: isDevelopment
-        ? { target: 'pino-pretty', options: { colorize: true } }
-        : undefined,
+    transport,
     base: {
         service: 'zk-guardian-gateway',
         version: process.env.npm_package_version || '1.0.0'
@@ -70,7 +83,9 @@ export function logSecurityEvent(data: {
  * Log a system event
  */
 export function logSystemEvent(data: {
-    event: 'STARTUP' | 'SHUTDOWN' | 'DB_CONNECTED' | 'REDIS_CONNECTED' | 'BATCH_FLUSH' | 'CIRCUIT_VERIFIED';
+    event: 'STARTUP' | 'SHUTDOWN' | 'DB_CONNECTED' | 'REDIS_CONNECTED' | 'BATCH_FLUSH' |
+    'CIRCUIT_VERIFIED' | 'TRACING_ENABLED' | 'KEY_MANAGER_READY' | 'COMPLIANCE_SERVICE_READY' |
+    'WORKER_POOL_READY' | 'CONFIG_LOADED' | 'HEALTH_CHECK';
     details?: string;
 }) {
     logger.info(data, `[SYSTEM] ${data.event}`);
