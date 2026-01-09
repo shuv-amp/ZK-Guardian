@@ -11,7 +11,7 @@ import { anomalyDetectionService } from '../services/anomalyDetection.js';
 import { logger } from '../lib/logger.js';
 import { AuthorizationError } from '../lib/errors.js';
 
-export const complianceRouter = Router();
+export const complianceRouter: Router = Router();
 
 // Schema for date range
 const DateRangeSchema = z.object({
