@@ -1,0 +1,180 @@
+# Prometheus Alerting Rules for ZK Guardian
+# 
+# SLO-based alerts per top 1% production standards
+
+groups:
+  - name: zk-guardian-slos
+    rules:
+      # Proof Generation Latency (P99 < 5s target)
+      - alert: ProofLatencyBreach
+        expr: histogram_quantile(0.99, rate(zk_proof_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ZK Proof P99 latency exceeds 5s SLO"
+          description: "P99 proof generation latency is {{ $value | humanizeDuration }}"
+
+      - alert: ProofLatencyCritical
+        expr: histogram_quantile(0.99, rate(zk_proof_duration_seconds_bucket[5m])) > 8
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ZK Proof P99 latency exceeds 8s - CRITICAL"
+          description: "P99 proof generation latency is {{ $value | humanizeDuration }}. Investigate immediately."
+
+      # Consent Handshake Success Rate (> 99.5% target)
+      - alert: ConsentSuccessRateLow
+        expr: |
+          (
+            sum(rate(consent_handshake_total{status="success"}[5m])) /
+            sum(rate(consent_handshake_total[5m]))
+          ) < 0.995
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consent handshake success rate below 99.5%"
+          description: "Current success rate: {{ $value | humanizePercentage }}"
+
+      - alert: ConsentSuccessRateCritical
+        expr: |
+          (
+            sum(rate(consent_handshake_total{status="success"}[5m])) /
+            sum(rate(consent_handshake_total[5m]))
+          ) < 0.98
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Consent handshake success rate below 98% - CRITICAL"
+          description: "Immediate investigation required. Rate: {{ $value | humanizePercentage }}"
+
+      # Blockchain Transaction Success (> 99.9% target)
+      - alert: BlockchainTxFailures
+        expr: |
+          sum(rate(blockchain_tx_total{status="failed"}[15m])) /
+          sum(rate(blockchain_tx_total[15m])) > 0.001
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Blockchain transaction failure rate exceeds 0.1%"
+          description: "Check Polygon Amoy RPC and contract state"
+
+      # API Availability (> 99.95% target)
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) /
+          sum(rate(http_requests_total[5m])) > 0.005
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API error rate exceeds 0.5%"
+          description: "Error rate: {{ $value | humanizePercentage }}"
+
+      - alert: HighErrorRateCritical
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) /
+          sum(rate(http_requests_total[5m])) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API error rate exceeds 1% - CRITICAL"
+          description: "Immediate investigation required"
+
+  - name: zk-guardian-security
+    rules:
+      # Break-Glass Abuse Detection
+      - alert: BreakGlassSpike
+        expr: sum(increase(break_glass_total[1h])) > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5 break-glass events in 1 hour"
+          description: "{{ $value }} break-glass events detected. May indicate abuse."
+
+      - alert: BreakGlassAbuse
+        expr: sum(increase(break_glass_total[1h])) > 10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "POTENTIAL BREAK-GLASS ABUSE - 10+ events/hour"
+          description: "Immediate compliance review required"
+
+      # Proof Verification Failures (potential tampering)
+      - alert: ProofVerificationFailures
+        expr: sum(rate(zk_proof_verification_total{result="failed"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ZK Proof verification failures detected"
+          description: "Potential proof tampering or circuit mismatch"
+
+      # Nullifier Replay Attempts
+      - alert: NullifierReplayAttempt
+        expr: sum(rate(nullifier_replay_attempts_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nullifier replay attack detected"
+          description: "Someone is attempting to reuse nullifiers"
+
+  - name: zk-guardian-infrastructure
+    rules:
+      # Circuit File Integrity
+      - alert: CircuitIntegrityChange
+        expr: changes(circuit_checksum_valid[1h]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit file integrity check failed"
+          description: "ZK circuit files may have been modified"
+
+      # Database Connection
+      - alert: DatabaseConnectionLost
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL connection lost"
+          description: "Gateway cannot connect to database"
+
+      # Redis Connection
+      - alert: RedisConnectionLost
+        expr: redis_up == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis connection lost"
+          description: "Rate limiting using in-memory fallback"
+
+      # Memory Usage
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 > 1024
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway memory usage exceeds 1GB"
+          description: "Current usage: {{ $value | humanize }}MB"
+
+      # Proof Queue Depth
+      - alert: ProofQueueBacklog
+        expr: zk_proof_queue_depth > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ZK proof queue has 50+ pending requests"
+          description: "May indicate capacity issues"
