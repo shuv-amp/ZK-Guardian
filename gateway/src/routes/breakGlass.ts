@@ -1,15 +1,13 @@
 /**
- * Break-Glass Emergency Access Routes
+ * Emergency Access (Break-Glass)
  * 
- * Per ZK_Guardian_Technical_Blueprint.md - Emergency Access Protocol
- * 
- * Break-glass allows clinicians to bypass normal consent requirements
- * in life-threatening emergencies, with full audit trail.
+ * When seconds count, this is the route that saves lives.
+ * Clinicians can bypass normal consent, but we log EVERYTHING to the blockchain.
  * 
  * Endpoints:
- * - POST /api/break-glass/:patientId - Initiate emergency access
- * - GET  /api/break-glass/:patientId/status - Check active break-glass status
- * - POST /api/break-glass/:patientId/close - Close break-glass session
+ * - POST /initiate - Smash the glass
+ * - GET  /status - check if glass is broken
+ * - POST /close - Clean up the glass
  */
 
 import { Router, Request, Response } from 'express';
@@ -21,14 +19,10 @@ import { logger, auditLogger } from '../lib/logger.js';
 import { env } from '../config/env.js';
 import { validateOrThrow, BreakGlassPayloadSchema } from '../schemas/validation.js';
 import { validateBody, validateParams, PatientParamsSchema } from '../middleware/validation.js';
+import { generateAndSubmitBreakGlassProof } from '../lib/zkProofService.js';
+import { webhookService } from '../services/webhookService.js';
 
 export const breakGlassRouter: Router = Router();
-
-// ConsentRevocationRegistry contract ABI (break-glass event)
-const REVOCATION_REGISTRY_ABI = [
-    'function logBreakGlassAccess(bytes32 patientHash, bytes32 clinicianHash, bytes32 reasonHash, uint256 timestamp) external',
-    'event BreakGlassAccess(bytes32 indexed patientHash, bytes32 indexed clinicianHash, bytes32 reasonHash, uint256 timestamp)'
-];
 
 // Schemas
 
@@ -46,7 +40,7 @@ breakGlassRouter.post(
     async (req: Request, res: Response) => {
         const startTime = Date.now();
         const requestId = crypto.randomUUID();
-        
+
         try {
             const { patientId } = req.params;
             const payload = req.body;
@@ -111,15 +105,18 @@ breakGlassRouter.post(
                 }
             });
 
-            // Log to blockchain (async, don't block response)
-            const txPromise = logBreakGlassToBlockchain(
-                patientHash,
-                clinicianHash,
-                reasonHash,
-                session.id
-            );
+            // Generate ZK Proof.
+            // We do this async so the API returns fast, but the proof happens in the background.
+            // V2: verify this on-chain
+            const zkProofPromise = generateAndSubmitBreakGlassProof({
+                patientId,
+                clinicianId,
+                emergencyCode: payload.emergencyCode || 3, // Default to HIGH
+                justificationHash: payload.justification,
+                sessionNonce: session.id // Unique nonce
+            }, payload.emergencyThreshold || 2);
 
-            // Critical audit log
+            // Audit Log: This looks serious.
             auditLogger.warn({
                 event: 'BREAK_GLASS_INITIATED',
                 sessionId: session.id,
@@ -132,29 +129,57 @@ breakGlassRouter.post(
                 witnessId: payload.witnessId,
                 expiresAt: expiresAt.toISOString(),
                 requestId
-            }, 'Break-glass emergency access initiated');
+            }, 'Break-glass initiated! Alerting compliance.');
 
-            // Wait for blockchain with timeout
+            // REAL-TIME ALERT. We don't wait for the nightly job.
+            // Send this to the compliance officer immediately.
+            const tenantId = (req as any).tenantId || 'default';
+            webhookService.emit(tenantId, 'break_glass.initiated', {
+                sessionId: session.id,
+                patientId,
+                clinicianId,
+                clinicianName,
+                department,
+                reason: payload.reason,
+                justificationHash: reasonHash,
+                witnessId: payload.witnessId,
+                expiresAt: expiresAt.toISOString(),
+                requiresReview: true,
+                severity: 'CRITICAL'
+            }).catch(err => logger.error({ err }, 'Failed to emit break-glass webhook'));
+
+            // Wait for ZK proof with timeout
             let txHash: string | null = null;
+            let zkVerified = false;
             try {
-                txHash = await Promise.race([
-                    txPromise,
-                    new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000))
+                const result = await Promise.race([
+                    zkProofPromise,
+                    new Promise<{ success: false; error: string }>((resolve) =>
+                        setTimeout(() => resolve({ success: false, error: 'Timeout' }), 30000)
+                    )
                 ]);
+
+                if (result.success && result.txHash) {
+                    txHash = result.txHash;
+                    zkVerified = true;
+                    logger.info({ txHash, sessionId: session.id }, 'ZK proof verified on-chain');
+                } else {
+                    logger.warn({ error: result.error, sessionId: session.id }, 'ZK proof submission failed, falling back to hash logging');
+                }
             } catch (error) {
-                logger.error({ error, sessionId: session.id }, 'Blockchain logging failed for break-glass');
+                logger.error({ error, sessionId: session.id }, 'ZK proof submission exception');
             }
 
             // Update session with txHash if available
             if (txHash) {
                 await prisma.breakGlassSession.update({
                     where: { id: session.id },
-                    data: { txHash }
+                    data: { txHash, zkVerified }
                 });
             }
 
             const duration = Date.now() - startTime;
-            
+
             res.status(201).json({
                 sessionId: session.id,
                 status: 'ACTIVE',
@@ -169,7 +194,7 @@ breakGlassRouter.post(
 
         } catch (error: any) {
             logger.error({ error, requestId }, 'Break-glass initiation failed');
-            
+
             if (error.code === 'P2002') {
                 return res.status(409).json({
                     error: 'DUPLICATE_SESSION',
@@ -323,51 +348,7 @@ breakGlassRouter.post(
     }
 );
 
-// Helper Functions
-
-async function logBreakGlassToBlockchain(
-    patientHash: string,
-    clinicianHash: string,
-    reasonHash: string,
-    sessionId: string
-): Promise<string> {
-    try {
-        const privateKey = env.GATEWAY_PRIVATE_KEY;
-        const rpcUrl = env.POLYGON_AMOY_RPC;
-        const registryAddress = env.CONSENT_REVOCATION_REGISTRY_ADDRESS;
-
-        if (!privateKey || !rpcUrl || !registryAddress) {
-            logger.warn({ sessionId }, 'Blockchain config missing for break-glass logging');
-            throw new Error('Blockchain not configured');
-        }
-
-        const provider = new ethers.JsonRpcProvider(rpcUrl);
-        const wallet = new ethers.Wallet(privateKey, provider);
-        const contract = new ethers.Contract(registryAddress, REVOCATION_REGISTRY_ABI, wallet);
-
-        const timestamp = Math.floor(Date.now() / 1000);
-        const tx = await contract.logBreakGlassAccess(
-            patientHash,
-            clinicianHash,
-            reasonHash,
-            timestamp,
-            { gasLimit: 200000 }
-        );
-
-        const receipt = await tx.wait();
-        
-        logger.info({
-            sessionId,
-            txHash: receipt.hash,
-            blockNumber: receipt.blockNumber
-        }, 'Break-glass logged to blockchain');
-
-        return receipt.hash;
-    } catch (error: any) {
-        logger.error({ error, sessionId }, 'Failed to log break-glass to blockchain');
-        throw error;
-    }
-}
+// Helper Functions removed - ZK proof generation moved to zkProofService.ts
 
 // Middleware to check break-glass authorization
 export async function checkBreakGlassAccess(

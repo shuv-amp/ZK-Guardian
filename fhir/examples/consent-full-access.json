@@ -1,0 +1,107 @@
+{
+    "resourceType": "Consent",
+    "id": "consent-full-access",
+    "meta": {
+        "profile": [
+            "http://zkguardian.io/fhir/StructureDefinition/zk-consent"
+        ]
+    },
+    "status": "active",
+    "scope": {
+        "coding": [
+            {
+                "system": "http://terminology.hl7.org/CodeSystem/consentscope",
+                "code": "patient-privacy",
+                "display": "Privacy Consent"
+            }
+        ]
+    },
+    "category": [
+        {
+            "coding": [
+                {
+                    "system": "http://loinc.org",
+                    "code": "59284-0",
+                    "display": "Consent Document"
+                }
+            ]
+        }
+    ],
+    "patient": {
+        "reference": "Patient/patient-456",
+        "display": "Jane Smith"
+    },
+    "dateTime": "2026-01-01T00:00:00Z",
+    "organization": [
+        {
+            "reference": "Organization/hospital-xyz",
+            "display": "XYZ Medical Center"
+        }
+    ],
+    "provision": {
+        "type": "permit",
+        "period": {
+            "start": "2026-01-01T00:00:00Z",
+            "end": "2026-12-31T23:59:59Z"
+        },
+        "actor": [
+            {
+                "role": {
+                    "coding": [
+                        {
+                            "system": "http://terminology.hl7.org/CodeSystem/v3-ParticipationType",
+                            "code": "PRCP",
+                            "display": "Primary Care Provider"
+                        }
+                    ]
+                },
+                "reference": {
+                    "reference": "Organization/hospital-xyz",
+                    "display": "All XYZ Medical Center Staff"
+                }
+            }
+        ],
+        "class": [
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "laboratory",
+                "display": "Laboratory Results"
+            },
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "vital-signs",
+                "display": "Vital Signs"
+            },
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "imaging",
+                "display": "Imaging Results"
+            },
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "medications",
+                "display": "Medication Records"
+            },
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "procedures",
+                "display": "Procedure Records"
+            },
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "encounters",
+                "display": "Visit History"
+            },
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "conditions",
+                "display": "Diagnoses/Problems"
+            },
+            {
+                "system": "http://zkguardian.io/fhir/CodeSystem/resource-category",
+                "code": "allergies",
+                "display": "Allergy Information"
+            }
+        ]
+    }
+}

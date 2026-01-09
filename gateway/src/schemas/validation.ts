@@ -68,7 +68,10 @@ export const BreakGlassPayloadSchema = z.object({
         .max(1000),
     clinicianSignature: z.string().min(1),
     witnessId: z.string().max(128).optional(),
-    estimatedDuration: z.number().int().positive().optional()
+    estimatedDuration: z.number().int().positive().optional(),
+    // V2: ZK Proof fields
+    emergencyCode: z.number().int().min(1).max(4).optional(), // 1=Low, 2=Medium, 3=High, 4=Critical
+    emergencyThreshold: z.number().int().min(1).max(4).optional() // Minimum required level
 });
 
 // WebSocket Message Schemas

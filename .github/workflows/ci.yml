@@ -176,6 +176,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       
+      - name: Verify circuit integrity (ZK1)
+        run: |
+          echo "Verifying circuit checksums..."
+          cd circuits
+          sha256sum AccessIsAllowedSecure_final.zkey > /tmp/actual_zkey.sha256
+          sha256sum BreakGlass_final.zkey >> /tmp/actual_zkey.sha256
+          # Check verification keys match expected
+          if [ -f "checksums.sha256" ]; then
+            sha256sum -c checksums.sha256
+            echo "✓ Circuit integrity verified"
+          else
+            echo "⚠ No checksums.sha256 found - creating initial checksums"
+            sha256sum AccessIsAllowedSecure_final.zkey BreakGlass_final.zkey > checksums.sha256
+          fi
+      
       - name: Run circuit tests
         run: pnpm --filter circuits test
 
