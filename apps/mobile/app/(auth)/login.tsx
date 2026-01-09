@@ -1,6 +1,6 @@
 /**
  * Login Screen
- * Role selection + SMART on FHIR authentication
+ * Pick a role, tap the button, get redirected. Simple.
  */
 
 import { useState } from 'react';
@@ -14,6 +14,7 @@ import {
     StatusBar
 } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
+import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, FONTS, SHADOWS, SPACING, RADIUS } from '../../constants/Theme';
@@ -23,7 +24,8 @@ WebBrowser.maybeCompleteAuthSession();
 type UserRole = 'patient' | 'clinician';
 
 export default function LoginScreen() {
-    const { login } = useAuth();
+    const { login, patientId, practitionerId } = useAuth();
+    const router = useRouter();
     const [selectedRole, setSelectedRole] = useState<UserRole>('patient');
     const [loading, setLoading] = useState(false);
 
@@ -32,11 +34,21 @@ export default function LoginScreen() {
         setLoading(true);
 
         try {
-            // Initiate real SMART on FHIR login flow
-            // Navigation is handled automatically by _layout.tsx based on auth state
+            // Kick off the SMART Auth flow.
+            // This will open the browser modal.
             const success = await login();
 
-            if (!success) {
+            if (success) {
+                // Navigate based on role after successful login
+                // Small delay to ensure auth state is fully updated
+                setTimeout(() => {
+                    if (selectedRole === 'patient') {
+                        router.replace('/(patient)/dashboard');
+                    } else {
+                        router.replace('/(clinician)/dashboard');
+                    }
+                }, 200);
+            } else {
                 // Stay on login screen if failed
                 console.log('[LoginScreen] Login failed or cancelled');
             }

@@ -1,5 +1,6 @@
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from '../utils/SecureStorage';
 import * as Crypto from 'expo-crypto';
+import * as LocalAuthentication from 'expo-local-authentication';
 
 const NULLIFIER_KEY = 'zk_guardian_patient_nullifier';
 const NULLIFIER_VERSION_KEY = 'zk_guardian_nullifier_version';
@@ -13,11 +14,18 @@ export interface NullifierInfo {
 
 export class NullifierManager {
     /**
-     * Retrieves existing nullifier or creates and securely stores a new one.
-     * The nullifier is a high-entropy secret used to blind on-chain hashes.
+     * Grab the nullifier (or make a new one).
+     * This is the "secret sauce" for ZK proofs.
+     * 
+     * STOP! We need biometrics (FaceID/TouchID) before touching this.
      */
-    static async getOrCreateNullifier(): Promise<bigint> {
+    static async getOrCreateNullifier(requireBiometric: boolean = true): Promise<bigint> {
         try {
+            // Check if biometric is available and required
+            if (requireBiometric) {
+                await this.requireBiometricAuth('Access your secure identity');
+            }
+
             let nullifierHex = await SecureStore.getItemAsync(NULLIFIER_KEY);
 
             if (!nullifierHex) {
@@ -30,6 +38,30 @@ export class NullifierManager {
         } catch (error) {
             console.error('[NullifierManager] Failed to access secure store:', error);
             throw new Error('SECURE_STORAGE_FAILURE');
+        }
+    }
+
+    /**
+     * Require biometric authentication before sensitive operations
+     */
+    private static async requireBiometricAuth(promptMessage: string): Promise<void> {
+        const hasHardware = await LocalAuthentication.hasHardwareAsync();
+        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+        if (!hasHardware || !isEnrolled) {
+            console.warn('[NullifierManager] Biometric not available, proceeding without');
+            return;
+        }
+
+        const result = await LocalAuthentication.authenticateAsync({
+            promptMessage,
+            fallbackLabel: 'Use Passcode',
+            disableDeviceFallback: false,
+            cancelLabel: 'Cancel'
+        });
+
+        if (!result.success) {
+            throw new Error('BIOMETRIC_AUTH_FAILED');
         }
     }
 
@@ -57,14 +89,9 @@ export class NullifierManager {
     }
 
     /**
-     * Reset nullifier when consent is updated or revoked.
-     * This should be called when:
-     * - User creates a new consent
-     * - User revokes a consent
-     * - User explicitly requests identity reset
-     * 
-     * After reset, all previous audit logs will no longer link to this patient.
-     * @param reason - Why the nullifier is being reset
+     * Time for a fresh start?
+     * Resets the nullifier. This unlinks all future activity from the past.
+     * Useful when a user revokes consent and wants to be "forgotten" moving forward.
      */
     static async resetNullifier(reason: 'consent_update' | 'consent_revoke' | 'user_request'): Promise<bigint> {
         console.log(`[NullifierManager] Resetting nullifier due to: ${reason}`);
@@ -119,8 +146,9 @@ export class NullifierManager {
     }
 
     /**
-     * Generates a fresh nonce for a specific session/access request.
-     * This ensures every access event has a unique hash even for same patient/resource.
+     * Fresh nonce for every request.
+     * Ensures we never generate the same proof hash twice.
+     * Privacy preservation 101.
      */
     static generateSessionNonce(): bigint {
         // High-precision timestamp + Random jitter

@@ -8,8 +8,12 @@ import { useAuth } from '../../hooks/useAuth';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { COLORS } from '../../constants/Theme';
 
+import { PushNotificationService } from '../../services/PushNotificationService';
+import { config } from '../../config/env';
+import { useEffect } from 'react';
+
 export default function PatientLayout() {
-    const { isLoading, isAuthenticated, patientId, practitionerId } = useAuth();
+    const { isLoading, isAuthenticated, patientId, practitionerId, accessToken } = useAuth();
 
     // Show loading while auth state is being determined
     if (isLoading) {
@@ -29,6 +33,13 @@ export default function PatientLayout() {
     if (practitionerId && !patientId) {
         return <Redirect href="/(clinician)/dashboard" />;
     }
+
+    // Sync push token with backend
+    useEffect(() => {
+        if (isAuthenticated && accessToken && patientId) {
+            PushNotificationService.syncTokenWithBackend(accessToken, config.GATEWAY_URL);
+        }
+    }, [isAuthenticated, accessToken, patientId]);
 
     // Render patient screens
     return (

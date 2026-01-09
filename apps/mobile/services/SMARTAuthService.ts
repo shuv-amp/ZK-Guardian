@@ -1,6 +1,6 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from '../utils/SecureStorage';
 import { config, isBackendConfigured } from '../config/env';
 
 // Required for Expo AuthSession
@@ -26,18 +26,18 @@ interface StoredTokens {
 }
 
 /**
- * SMARTAuthService
+ * SMART Auth Service
  * 
- * Handles SMART on FHIR OAuth2 authentication flow.
- * Stores tokens securely and provides refresh capability.
+ * The heavy lifter for OAuth2 logic.
+ * Handles the redirect dance and keeps tokens safe in SecureStore.
  */
 export class SMARTAuthService {
     private discoveryDocument: AuthSession.DiscoveryDocument | null = null;
     private tokens: StoredTokens | null = null;
 
     /**
-     * Initializes the service by loading cached tokens.
-     * Call this at app startup.
+     * Boot up.
+     * Checks if we have valid tokens stashed away.
      */
     async initialize(): Promise<boolean> {
         try {
@@ -60,8 +60,8 @@ export class SMARTAuthService {
     }
 
     /**
-     * Starts the SMART on FHIR OAuth2 login flow.
-     * Opens a browser for user authentication.
+     * Start the login flow.
+     * Pops open the system browser for the user to sign in.
      */
     async login(): Promise<boolean> {
         if (!isBackendConfigured()) {
