@@ -5,6 +5,7 @@
 
 import { prisma } from '../db/client.js';
 import { logger } from '../lib/logger.js';
+import { webhookService } from './webhookService.js';
 
 export interface Anomaly {
     type: 'HIGH_VOLUME' | 'OFF_HOURS_SPIKE' | 'BREAK_GLASS_CLUSTER';
@@ -15,6 +16,38 @@ export interface Anomaly {
 }
 
 export class AnomalyDetectionService {
+    private checkInterval: NodeJS.Timeout | null = null;
+    private isRunning = false;
+
+    /**
+     * Start periodic anomaly checks (every 10 minutes)
+     */
+    start() {
+        if (this.isRunning) return;
+        this.isRunning = true;
+
+        // Run immediately
+        this.runAllChecks().catch(err => logger.error({ err }, 'Initial anomaly check failed'));
+
+        // Schedule
+        this.checkInterval = setInterval(() => {
+            this.runAllChecks().catch(err => logger.error({ err }, 'Scheduled anomaly check failed'));
+        }, 10 * 60 * 1000); // 10 minutes
+
+        logger.info('Anomaly Detection Service started');
+    }
+
+    /**
+     * Stop periodic checks
+     */
+    stop() {
+        if (this.checkInterval) {
+            clearInterval(this.checkInterval);
+            this.checkInterval = null;
+        }
+        this.isRunning = false;
+        logger.info('Anomaly Detection Service stopped');
+    }
 
     /**
      * Volume spike check. > 50 accesses in 1h by one person is sus.
@@ -83,10 +116,11 @@ export class AnomalyDetectionService {
     }
 
     /**
-     * Run all checks
+     * Run all checks and persist findings
      */
     async runAllChecks(): Promise<Anomaly[]> {
         try {
+            logger.debug('Running anomaly checks...');
             const [volume, clusters] = await Promise.all([
                 this.detectVolumeAnomalies(),
                 this.detectBreakGlassClusters()
@@ -96,6 +130,31 @@ export class AnomalyDetectionService {
 
             if (allAnomalies.length > 0) {
                 logger.warn({ count: allAnomalies.length }, 'Anomalies detected');
+
+                // Persist to SystemEvent and Trigger Webhooks
+                for (const anomaly of allAnomalies) {
+                    // 1. Log to DB
+                    await prisma.systemEvent.create({
+                        data: {
+                            eventType: 'ANOMALY_DETECTED',
+                            severity: anomaly.severity,
+                            component: 'AnomalyDetection',
+                            details: anomaly.description,
+                            metadata: JSON.stringify({ ...anomaly.metadata, type: anomaly.type })
+                        }
+                    });
+
+                    // 2. Emit Webhook
+                    // For system-wide alerts, we use a special 'system' tenant identifier or broadcast to an admin channel
+                    webhookService.emit('system', 'alert.created', {
+                        alertType: 'ANOMALY_DETECTED',
+                        severity: anomaly.severity,
+                        anomalyType: anomaly.type,
+                        details: anomaly.description,
+                        detectedAt: anomaly.detectedAt.toISOString(),
+                        metadata: anomaly.metadata
+                    }).catch(err => logger.error({ err }, 'Failed to emit anomaly webhook'));
+                }
             }
 
             return allAnomalies;
