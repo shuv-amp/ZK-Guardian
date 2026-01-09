@@ -2,7 +2,7 @@
 
 > Privacy-preserving healthcare audit log using zk-SNARKs and HL7 FHIR R4
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Polygon Amoy](https://img.shields.io/badge/Polygon-Amoy-purple)](https://amoy.polygonscan.com/)
 [![FHIR R4](https://img.shields.io/badge/FHIR-R4-orange)](https://hl7.org/fhir/R4/)
 
@@ -104,7 +104,9 @@ pnpm contracts:test
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) for details.
+Apache 2.0 License - see [LICENSE](LICENSE) for details.
+
+> **⚠️ EDUCATIONAL / POC USE ONLY**: This is a Proof of Concept for verified healthcare access. Do not use in production without a professional security audit of the ZK circuits and smart contracts.
 
 ---
 
