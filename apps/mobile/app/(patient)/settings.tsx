@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -7,28 +7,105 @@ import {
     Switch,
     ScrollView,
     Alert,
-    StatusBar
+    StatusBar,
+    ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { NullifierManager } from '../../services/NullifierManager';
+import { config } from '../../config/env';
+import * as SecureStore from 'expo-secure-store';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
 
 /**
  * Settings Screen
  * 
  * Allows patient to configure app preferences and security settings.
+ * Preferences are synced with backend for persistence.
  */
 
-export default function SettingsScreen() {
-    const { patientId, logout } = useAuth();
+interface Preferences {
+    biometricEnabled: boolean;
+    pushNotifications: boolean;
+    alertsForAfterHours: boolean;
+    alertsForNewProvider: boolean;
+    alertsForBreakGlass: boolean;
+    allowEmergencyAccess: boolean;
+    restrictAccessHours: boolean;
+    accessHoursStart: number;
+    accessHoursEnd: number;
+}
 
-    const [biometricEnabled, setBiometricEnabled] = useState(true);
-    const [pushNotifications, setPushNotifications] = useState(true);
-    const [alertsForAfterHours, setAlertsForAfterHours] = useState(true);
-    const [alertsForNewProvider, setAlertsForNewProvider] = useState(true);
-    const [alertsForBreakGlass, setAlertsForBreakGlass] = useState(true);
+export default function SettingsScreen() {
+    const { patientId, accessToken, logout } = useAuth();
+
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [preferences, setPreferences] = useState<Preferences>({
+        biometricEnabled: true,
+        pushNotifications: true,
+        alertsForAfterHours: true,
+        alertsForNewProvider: true,
+        alertsForBreakGlass: true,
+        allowEmergencyAccess: true,
+        restrictAccessHours: false,
+        accessHoursStart: 7,
+        accessHoursEnd: 19,
+    });
+
+    // Fetch preferences on mount
+    useEffect(() => {
+        fetchPreferences();
+    }, []);
+
+    const fetchPreferences = async () => {
+        try {
+            const response = await fetch(`${config.GATEWAY_URL}/api/patient/preferences`, {
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setPreferences(data);
+            }
+        } catch (error) {
+            console.error('Failed to fetch preferences:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const updatePreference = async (key: keyof Preferences, value: boolean | number) => {
+        setPreferences(prev => ({ ...prev, [key]: value }));
+        setIsSaving(true);
+
+        try {
+            // For biometric preference, also save to SecureStore for offline access
+            if (key === 'biometricEnabled') {
+                await SecureStore.setItemAsync('zk_guardian_biometric_enabled', String(value));
+            }
+
+            const response = await fetch(`${config.GATEWAY_URL}/api/patient/preferences`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ [key]: value })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to save preference');
+            }
+        } catch (error) {
+            console.error('Failed to save preference:', error);
+            // Revert on error
+            fetchPreferences();
+            Alert.alert('Error', 'Failed to save preference. Please try again.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
 
     const handleLogout = () => {
         Alert.alert(
@@ -63,6 +140,17 @@ export default function SettingsScreen() {
             ]
         );
     };
+
+    if (isLoading) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={COLORS.primary} />
+                    <Text style={{ marginTop: SPACING.md, color: COLORS.textSecondary }}>Loading settings...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     const SettingRow = ({
         icon,
@@ -157,8 +245,8 @@ export default function SettingsScreen() {
                             icon="finger-print"
                             title="Biometric Authentication"
                             subtitle="Require Face ID / Touch ID for consent"
-                            value={biometricEnabled}
-                            onValueChange={setBiometricEnabled}
+                            value={preferences.biometricEnabled}
+                            onValueChange={(val) => updatePreference('biometricEnabled', val)}
                         />
                         <View style={styles.divider} />
                         <ActionRow
@@ -178,8 +266,8 @@ export default function SettingsScreen() {
                             icon="notifications-outline"
                             title="Push Notifications"
                             subtitle="Receive consent requests instantly"
-                            value={pushNotifications}
-                            onValueChange={setPushNotifications}
+                            value={preferences.pushNotifications}
+                            onValueChange={(val) => updatePreference('pushNotifications', val)}
                         />
                     </View>
                 </View>
@@ -192,24 +280,24 @@ export default function SettingsScreen() {
                             icon="moon-outline"
                             title="After-Hours Access"
                             subtitle="Alert when accessed outside 7AM-7PM"
-                            value={alertsForAfterHours}
-                            onValueChange={setAlertsForAfterHours}
+                            value={preferences.alertsForAfterHours}
+                            onValueChange={(val) => updatePreference('alertsForAfterHours', val)}
                         />
                         <View style={styles.divider} />
                         <SettingRow
                             icon="person-add-outline"
                             title="New Provider Access"
                             subtitle="Alert for first-time providers"
-                            value={alertsForNewProvider}
-                            onValueChange={setAlertsForNewProvider}
+                            value={preferences.alertsForNewProvider}
+                            onValueChange={(val) => updatePreference('alertsForNewProvider', val)}
                         />
                         <View style={styles.divider} />
                         <SettingRow
                             icon="flash-outline"
                             title="Emergency Access"
                             subtitle="Alert for break-glass access"
-                            value={alertsForBreakGlass}
-                            onValueChange={setAlertsForBreakGlass}
+                            value={preferences.alertsForBreakGlass}
+                            onValueChange={(val) => updatePreference('alertsForBreakGlass', val)}
                         />
                     </View>
                 </View>
@@ -241,6 +329,11 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: COLORS.background,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     header: {
         padding: SPACING.lg,
