@@ -12,6 +12,8 @@ import { env } from '../config/env.js';
 import { prisma } from '../db/client.js';
 import { getRedis } from '../db/redis.js';
 import { logger } from '../lib/logger.js';
+import { zkProofService } from '../services/zkProofService.js';
+import os from 'os';
 
 export const healthRouter: Router = Router();
 
@@ -27,6 +29,7 @@ interface HealthStatus {
         database: ServiceStatus;
         redis: ServiceStatus;
         zkProver: ServiceStatus;
+        memory: ServiceStatus;
     };
 }
 
@@ -43,10 +46,10 @@ interface ServiceStatus {
  */
 healthRouter.get('/', async (_req, res) => {
     const health = await getHealthStatus();
-    
-    const statusCode = health.status === 'healthy' ? 200 
-        : health.status === 'degraded' ? 200 
-        : 503;
+
+    const statusCode = health.status === 'healthy' ? 200
+        : health.status === 'degraded' ? 200
+            : 503;
 
     res.status(statusCode).json(health);
 });
@@ -57,7 +60,7 @@ healthRouter.get('/', async (_req, res) => {
  */
 healthRouter.get('/ready', async (_req, res) => {
     const health = await getHealthStatus();
-    
+
     // Critical dependencies for readiness
     const criticalServices = ['database', 'zkProver'] as const;
     const allCriticalReady = criticalServices.every(
@@ -91,20 +94,21 @@ healthRouter.get('/live', (_req, res) => {
  */
 async function getHealthStatus(): Promise<HealthStatus> {
     const startTime = Date.now();
-    
+
     // Check all services in parallel
-    const [fhir, blockchain, database, redis, zkProver] = await Promise.all([
+    const [fhir, blockchain, database, redis, zkProver, memory] = await Promise.all([
         checkFhirHealth(),
         checkBlockchainHealth(),
         checkDatabaseHealth(),
         checkRedisHealth(),
-        checkZkProverHealth()
+        checkZkProverHealth(),
+        checkMemoryHealth()
     ]);
 
     // Determine overall status
-    const services = { fhir, blockchain, database, redis, zkProver };
+    const services = { fhir, blockchain, database, redis, zkProver, memory };
     const statuses = Object.values(services).map(s => s.status);
-    
+
     let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
     if (statuses.includes('disconnected')) {
         overallStatus = statuses.every(s => s === 'disconnected') ? 'unhealthy' : 'degraded';
@@ -153,7 +157,7 @@ async function checkFhirHealth(): Promise<ServiceStatus> {
  */
 async function checkBlockchainHealth(): Promise<ServiceStatus> {
     const start = Date.now();
-    
+
     if (!env.POLYGON_AMOY_RPC) {
         return {
             status: 'disconnected',
@@ -232,42 +236,23 @@ async function checkRedisHealth(): Promise<ServiceStatus> {
 /**
  * Check ZK prover readiness
  */
+/**
+ * Check ZK prover readiness via centralized service
+ */
 async function checkZkProverHealth(): Promise<ServiceStatus> {
     const start = Date.now();
     try {
-        const fs = await import('fs/promises');
-        const path = await import('path');
-        
-        const circuitsDir = path.resolve(process.cwd(), '../circuits/build');
-        
-        // Check for required circuit files
-        const requiredFiles = [
-            'AccessIsAllowed_final.zkey',
-            'AccessIsAllowed_js/AccessIsAllowed.wasm',
-            'verification_key.json'
-        ];
-
-        const checks = await Promise.all(
-            requiredFiles.map(async (file) => {
-                try {
-                    await fs.access(path.join(circuitsDir, file));
-                    return true;
-                } catch {
-                    return false;
-                }
-            })
-        );
-
-        const allFilesPresent = checks.every(Boolean);
+        const integrity = await zkProofService.verifyCircuitIntegrity();
 
         return {
-            status: allFilesPresent ? 'connected' : 'degraded',
+            status: integrity.valid ? 'connected' : 'degraded',
             latency: Date.now() - start,
             details: {
-                circuitsDir,
-                filesPresent: checks.filter(Boolean).length,
-                totalRequired: requiredFiles.length
-            }
+                valid: integrity.valid,
+                checksums: integrity.checksums,
+                errors: integrity.errors
+            },
+            error: integrity.valid ? undefined : 'Circuit integrity check failed'
         };
     } catch (error: any) {
         return {
@@ -276,5 +261,29 @@ async function checkZkProverHealth(): Promise<ServiceStatus> {
             error: error.message
         };
     }
+}
+
+/**
+ * Check System Memory Health
+ */
+async function checkMemoryHealth(): Promise<ServiceStatus> {
+    const start = Date.now();
+    const freeMem = os.freemem();
+    const totalMem = os.totalmem();
+    const freeMemMB = Math.round(freeMem / 1024 / 1024);
+    const usedMemPercentage = ((totalMem - freeMem) / totalMem) * 100;
+
+    // Warn if free memory is less than 512MB (ZK requirement)
+    const status = freeMemMB < 512 ? 'degraded' : 'connected';
+
+    return {
+        status,
+        latency: Date.now() - start,
+        details: {
+            freeMemMB,
+            totalMemMB: Math.round(totalMem / 1024 / 1024),
+            usedMemPercentage: Math.round(usedMemPercentage)
+        }
+    };
 }
 
