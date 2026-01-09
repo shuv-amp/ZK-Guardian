@@ -1,6 +1,8 @@
+import { Platform } from 'react-native';
 import { config, isBackendConfigured } from '../config/env';
 import { NullifierManager } from './NullifierManager';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 
 type ConsentRequest = {
     type: 'CONSENT_REQUEST';
@@ -18,10 +20,11 @@ type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 type ConsentRequestHandler = (request: ConsentRequest) => void;
 
 /**
- * ConsentHandshakeClient
+ * Consent Handshake Client
  * 
- * Manages WebSocket connection to the Gateway for real-time consent requests.
- * Implements automatic reconnection with exponential backoff.
+ * This little guy manages the real-time WebSocket connection.
+ * It's what keeps the phone and the gateway talking for instant consent popups.
+ * Includes auto-reconnect backoff so we don't hammer the server.
  */
 export class ConsentHandshakeClient {
     private socket: WebSocket | null = null;
@@ -36,9 +39,9 @@ export class ConsentHandshakeClient {
     private onStateChangeCallback: ((state: ConnectionState) => void) | null = null;
 
     /**
-     * Connects to the Gateway's WebSocket endpoint.
-     * Must be called after user authentication with a valid patientId.
-     * Prevents duplicate connections - if already connected/connecting, this is a no-op.
+     * Connects to the Gateway.
+     * Call this ONLY after we know who the patient is.
+     * Smart enough to not connect twice.
      */
     connect(patientId: string) {
         // Prevent duplicate connections
@@ -104,15 +107,89 @@ export class ConsentHandshakeClient {
 
     private handleMessage(data: string) {
         try {
-            const message = JSON.parse(data) as ConsentRequest;
+            const message = JSON.parse(data);
 
-            if (message.type === 'CONSENT_REQUEST') {
-                console.log('[ConsentClient] Received consent request:', message.requestId);
-                this.onRequestCallback?.(message);
+            switch (message.type) {
+                case 'AUTH_CHALLENGE':
+                    // Gateway is asking us to authenticate
+                    console.log('[ConsentClient] Received AUTH_CHALLENGE');
+                    this.handleAuthChallenge(message.challenge);
+                    break;
+
+                case 'AUTH_SUCCESS':
+                    console.log('[ConsentClient] Authentication successful');
+                    // Session is now authenticated, ready to handle consent requests
+                    break;
+
+                case 'AUTH_REQUIRED':
+                    console.warn('[ConsentClient] Auth required:', message.message);
+                    // Re-trigger authentication
+                    if (message.challenge) {
+                        this.handleAuthChallenge(message.challenge);
+                    }
+                    break;
+
+                case 'CONSENT_REQUEST':
+                    console.log('[ConsentClient] Received consent request:', message.requestId);
+                    this.onRequestCallback?.(message);
+                    break;
+
+                default:
+                    console.log('[ConsentClient] Unknown message type:', message.type);
             }
         } catch (error) {
             console.error('[ConsentClient] Failed to parse message:', error);
         }
+    }
+
+    /**
+     * Challenge Accepted!
+     * The gateway wants proof we are who we say we are.
+     * In prod, we'd sign this with a real private key. For now, a hash will do.
+     */
+    private async handleAuthChallenge(challenge: string) {
+        try {
+            // In development mode, use a simplified auth response
+            // In production, this should use proper cryptographic signing with patient's private key
+            const timestamp = Date.now();
+
+            // Simple hash-based signature (for development)
+            // In production: Use actual crypto signing with user's keypair
+            const signature = await this.signChallenge(challenge, timestamp);
+
+            const authResponse = {
+                type: 'AUTH_RESPONSE',
+                signature,
+                timestamp,
+            };
+
+            if (this.socket?.readyState === WebSocket.OPEN) {
+                this.socket.send(JSON.stringify(authResponse));
+                console.log('[ConsentClient] Sent AUTH_RESPONSE');
+            }
+        } catch (error) {
+            console.error('[ConsentClient] Failed to handle auth challenge:', error);
+        }
+    }
+
+    /**
+     * Signs a challenge for authentication.
+     * In development, uses a simple hash. In production, should use proper key-based signing.
+     */
+    private async signChallenge(challenge: string, timestamp: number): Promise<string> {
+        // Development: Create a simple deterministic signature
+        // Production: Use actual private key signing
+        const message = `${challenge}:${timestamp}:${this.patientId}`;
+
+        // Use a simple hash for now (crypto.subtle not available in RN by default)
+        // This is acceptable for development but should be replaced with proper signing
+        let hash = 0;
+        for (let i = 0; i < message.length; i++) {
+            const char = message.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash;
+        }
+        return `dev_sig_${Math.abs(hash).toString(16)}`;
     }
 
     private scheduleReconnect() {
@@ -166,26 +243,62 @@ export class ConsentHandshakeClient {
     }
 
     /**
-     * Performs biometric authentication before approving consent.
-     * Returns true if biometric check passed or unavailable (fallback to password).
+     * Biometric Check.
+     * Before we say "Yes" to sharing data, we need to know it's really the user.
+     * Skips on Web/Dev because... well, simulators don't have FaceID.
      */
     async authenticateForConsent(): Promise<boolean> {
-        const hasHardware = await LocalAuthentication.hasHardwareAsync();
-        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-
-        if (!hasHardware || !isEnrolled) {
-            // Fallback: Allow if biometrics not available (could add PIN fallback here)
-            console.log('[ConsentClient] Biometrics not available, allowing consent');
+        // Skip biometrics on web - not supported
+        if (Platform.OS === 'web') {
+            console.log('[ConsentClient] Web platform - skipping biometrics');
             return true;
         }
 
-        const result = await LocalAuthentication.authenticateAsync({
-            promptMessage: 'Confirm your identity to approve access',
-            fallbackLabel: 'Use Passcode',
-            cancelLabel: 'Cancel',
-        });
+        // In development mode, skip biometrics for easier testing
+        if (__DEV__) {
+            console.log('[ConsentClient] DEV mode - skipping biometrics');
+            return true;
+        }
 
-        return result.success;
+        try {
+            // Check if user has disabled biometrics in settings
+            const biometricPref = await SecureStore.getItemAsync('zk_guardian_biometric_enabled');
+
+            if (biometricPref === 'false') {
+                console.log('[ConsentClient] Biometrics disabled by user preference');
+                return true;
+            }
+
+            const hasHardware = await LocalAuthentication.hasHardwareAsync();
+            const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+            if (!hasHardware || !isEnrolled) {
+                // Fallback: Allow if biometrics not available
+                console.log('[ConsentClient] Biometrics not available, allowing consent');
+                return true;
+            }
+
+            // Get supported authentication types
+            const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+            const hasFaceId = types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION);
+            const hasFingerprint = types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT);
+
+            const authMethod = hasFaceId ? 'Face ID' : hasFingerprint ? 'Touch ID' : 'Biometrics';
+
+            const result = await LocalAuthentication.authenticateAsync({
+                promptMessage: `Use ${authMethod} to approve access`,
+                fallbackLabel: 'Use Passcode',
+                cancelLabel: 'Cancel',
+                disableDeviceFallback: false,
+            });
+
+            console.log(`[ConsentClient] Biometric result: ${result.success ? 'success' : 'failed/cancelled'}`);
+            return result.success;
+        } catch (error) {
+            console.error('[ConsentClient] Biometric auth error:', error);
+            // On error, still require confirmation - fail secure
+            return false;
+        }
     }
 
     /**
