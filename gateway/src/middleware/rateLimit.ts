@@ -4,15 +4,14 @@ import { logger, logSecurityEvent } from '../lib/logger.js';
 import { RateLimitError } from '../lib/errors.js';
 
 /**
- * Rate Limiting Middleware (Redis-backed)
+ * Traffic Cop (Redis-backed)
  * 
- * Tiered limits per API_REFERENCE spec:
- * | Endpoint Type    | Limit | Window |
- * |------------------|-------|--------|
- * | FHIR Read        | 100   | 1 min  |
- * | FHIR Search      | 30    | 1 min  |
- * | Consent Actions  | 10    | 1 min  |
- * | Audit History    | 60    | 1 min  |
+ * Keeps our API from melting down under load.
+ * We have different speed limits depending on what you're doing.
+ * 
+ * Limits:
+ * - FHIR Read: 100/min (generous)
+ * - Break-Glass: 3/hour (strict!)
  */
 
 interface RateLimitConfig {
@@ -25,16 +24,18 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
     'fhir-search': { limit: 30, windowSeconds: 60 },
     'consent': { limit: 10, windowSeconds: 60 },
     'audit': { limit: 60, windowSeconds: 60 },
+    'break-glass': { limit: 3, windowSeconds: 3600 }, // Whoa there, only 3 emergencies per hour?
     'default': { limit: 100, windowSeconds: 60 }
 };
 
-// In-memory fallback when Redis unavailable
+// Fallback memory store. If Redis dies, we don't want to crash.
 const fallbackStore = new Map<string, { count: number; resetAt: number }>();
 
 function getEndpointType(req: Request): string {
     const path = req.path.toLowerCase();
     const method = req.method.toUpperCase();
 
+    if (path.includes('/break-glass')) return 'break-glass';
     if (path.includes('/consent')) return 'consent';
     if (path.includes('/access-history') || path.includes('/access-alerts')) return 'audit';
     if (path.startsWith('/fhir')) {
