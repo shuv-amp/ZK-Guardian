@@ -43,7 +43,7 @@ zk-guardian/
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/zk-guardian.git
+git clone https://github.com/shuv-amp/zk-guardian.git
 cd zk-guardian
 
 # Install dependencies
