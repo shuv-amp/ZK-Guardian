@@ -1,0 +1,17 @@
+# Grafana Dashboard Provisioning
+# Auto-provision ZK Guardian dashboards on startup
+
+apiVersion: 1
+
+providers:
+  - name: 'ZK Guardian Dashboards'
+    orgId: 1
+    folder: 'ZK Guardian'
+    folderUid: 'zk-guardian'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true
