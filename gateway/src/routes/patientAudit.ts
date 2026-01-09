@@ -10,6 +10,8 @@ import {
 } from '../schemas/validation.js';
 import { ValidationError, ResourceNotFoundError } from '../lib/errors.js';
 import { validateQuery, validateParams, validateBody, PatientParamsSchema, PatientAlertParamsSchema } from '../middleware/validation.js';
+import { pushNotificationService } from '../services/pushNotificationService.js';
+import { pdfService } from '../services/pdfService.js';
 
 export const patientAuditRouter: Router = Router();
 
@@ -44,73 +46,176 @@ patientAuditRouter.get(
             const where: any = { patientId };
 
             if (query.from || query.to) {
-            where.createdAt = {};
-            if (query.from) where.createdAt.gte = new Date(query.from);
-            if (query.to) where.createdAt.lte = new Date(query.to);
-        }
-        if (query.resourceType) where.resourceType = query.resourceType;
-        if (query.department) where.department = query.department;
-        if (!query.includeBreakGlass) where.isBreakGlass = false;
-
-        const [records, total] = await Promise.all([
-            prisma.auditLog.findMany({
-                where,
-                orderBy: { createdAt: 'desc' },
-                take: query.limit,
-                skip: query.offset
-            }),
-            prisma.auditLog.count({ where })
-        ]);
-
-        // Transform to API format
-        const accessRecords: AccessRecord[] = records.map(r => ({
-            id: r.id,
-            clinician: {
-                id: r.clinicianId,
-                displayName: r.clinicianName || 'Unknown',
-                department: r.department || 'Unknown'
-            },
-            resourceType: r.resourceType,
-            accessEventHash: r.accessEventHash,
-            txHash: r.txHash || undefined,
-            accessTimestamp: r.createdAt.toISOString(),
-            isBreakGlass: r.isBreakGlass,
-            isVerifiedOnChain: r.verified
-        }));
-
-        // Get summary stats
-        const [uniqueClinicians, breakGlassCount] = await Promise.all([
-            prisma.auditLog.groupBy({
-                by: ['clinicianId'],
-                where: { patientId },
-                _count: true
-            }),
-            prisma.auditLog.count({ where: { patientId, isBreakGlass: true } })
-        ]);
-
-        res.json({
-            records: accessRecords,
-            pagination: {
-                total,
-                limit: query.limit,
-                offset: query.offset,
-                hasMore: (query.offset ?? 0) + records.length < total
-            },
-            summary: {
-                totalAccesses: total,
-                uniqueClinicians: uniqueClinicians.length,
-                breakGlassCount
+                where.createdAt = {};
+                if (query.from) where.createdAt.gte = new Date(query.from);
+                if (query.to) where.createdAt.lte = new Date(query.to);
             }
-        });
+            if (query.resourceType) where.resourceType = query.resourceType;
+            if (query.department) where.department = query.department;
+            if (!query.includeBreakGlass) where.isBreakGlass = false;
 
-    } catch (error) {
-        if (error instanceof ValidationError) {
-            return res.status(400).json(error.toJSON());
+            const [records, total] = await Promise.all([
+                prisma.auditLog.findMany({
+                    where,
+                    orderBy: { createdAt: 'desc' },
+                    take: query.limit,
+                    skip: query.offset
+                }),
+                prisma.auditLog.count({ where })
+            ]);
+
+            // Transform to API format
+            const accessRecords: AccessRecord[] = records.map(r => ({
+                id: r.id,
+                clinician: {
+                    id: r.clinicianId,
+                    displayName: r.clinicianName || 'Unknown',
+                    department: r.department || 'Unknown'
+                },
+                resourceType: r.resourceType,
+                accessEventHash: r.accessEventHash,
+                txHash: r.txHash || undefined,
+                accessTimestamp: r.createdAt.toISOString(),
+                isBreakGlass: r.isBreakGlass,
+                isVerifiedOnChain: r.verified
+            }));
+
+            // Get summary stats
+            const [uniqueClinicians, breakGlassCount] = await Promise.all([
+                prisma.auditLog.groupBy({
+                    by: ['clinicianId'],
+                    where: { patientId },
+                    _count: true
+                }),
+                prisma.auditLog.count({ where: { patientId, isBreakGlass: true } })
+            ]);
+
+            res.json({
+                records: accessRecords,
+                pagination: {
+                    total,
+                    limit: query.limit,
+                    offset: query.offset,
+                    hasMore: (query.offset ?? 0) + records.length < total
+                },
+                summary: {
+                    totalAccesses: total,
+                    uniqueClinicians: uniqueClinicians.length,
+                    breakGlassCount
+                }
+            });
+
+        } catch (error) {
+            if (error instanceof ValidationError) {
+                return res.status(400).json(error.toJSON());
+            }
+            logger.error({ error, patientId: req.params.patientId }, 'Failed to fetch access history');
+            res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to fetch access history' });
         }
-        logger.error({ error, patientId: req.params.patientId }, 'Failed to fetch access history');
-        res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to fetch access history' });
+    });
+
+// GET /api/patient/:patientId/audit-logs/export
+patientAuditRouter.get(
+    '/:patientId/audit-logs/export',
+    validateParams(PatientParamsSchema),
+    async (req: Request, res: Response) => {
+        try {
+            const { patientId } = req.params;
+
+            // Generate PDF
+            const pdfBuffer = await pdfService.generateAuditReport(patientId);
+
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="audit-report-${patientId}.pdf"`);
+            res.send(pdfBuffer);
+
+        } catch (error) {
+            logger.error({ error, patientId: req.params.patientId }, 'Failed to export audit log');
+            res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to generate report' });
+        }
     }
-});
+);
+
+// GET /api/patient/:patientId/audit-logs
+patientAuditRouter.get(
+    '/:patientId/audit-logs',
+    validateParams(PatientParamsSchema),
+    validateQuery(AccessHistoryQuerySchema), // Assuming this is the correct schema for listing audit logs
+    async (req: Request, res: Response) => {
+        try {
+            const { patientId } = req.params;
+            const query = (req as any).validatedQuery as AccessHistoryQuery;
+
+            const where: any = { patientId };
+
+            if (query.from || query.to) {
+                where.createdAt = {};
+                if (query.from) where.createdAt.gte = new Date(query.from);
+                if (query.to) where.createdAt.lte = new Date(query.to);
+            }
+            if (query.resourceType) where.resourceType = query.resourceType;
+            if (query.department) where.department = query.department;
+            if (!query.includeBreakGlass) where.isBreakGlass = false;
+
+            const [records, total] = await Promise.all([
+                prisma.auditLog.findMany({
+                    where,
+                    orderBy: { createdAt: 'desc' },
+                    take: query.limit,
+                    skip: query.offset
+                }),
+                prisma.auditLog.count({ where })
+            ]);
+
+            // Transform to API format
+            const accessRecords: AccessRecord[] = records.map(r => ({
+                id: r.id,
+                clinician: {
+                    id: r.clinicianId,
+                    displayName: r.clinicianName || 'Unknown',
+                    department: r.department || 'Unknown'
+                },
+                resourceType: r.resourceType,
+                accessEventHash: r.accessEventHash,
+                txHash: r.txHash || undefined,
+                accessTimestamp: r.createdAt.toISOString(),
+                isBreakGlass: r.isBreakGlass,
+                isVerifiedOnChain: r.verified
+            }));
+
+            // Get summary stats
+            const [uniqueClinicians, breakGlassCount] = await Promise.all([
+                prisma.auditLog.groupBy({
+                    by: ['clinicianId'],
+                    where: { patientId },
+                    _count: true
+                }),
+                prisma.auditLog.count({ where: { patientId, isBreakGlass: true } })
+            ]);
+
+            res.json({
+                records: accessRecords,
+                pagination: {
+                    total,
+                    limit: query.limit,
+                    offset: query.offset,
+                    hasMore: (query.offset ?? 0) + records.length < total
+                },
+                summary: {
+                    totalAccesses: total,
+                    uniqueClinicians: uniqueClinicians.length,
+                    breakGlassCount
+                }
+            });
+
+        } catch (error) {
+            if (error instanceof ValidationError) {
+                return res.status(400).json(error.toJSON());
+            }
+            logger.error({ error, patientId: req.params.patientId }, 'Failed to fetch audit logs');
+            res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to fetch audit logs' });
+        }
+    });
 
 // GET /api/patient/:patientId/access-alerts
 
@@ -122,7 +227,7 @@ patientAuditRouter.get(
         try {
             const { patientId } = req.params;
             const query = (req as any).validatedQuery as AccessAlertsQuery;
-            
+
             const acknowledged = query.acknowledged;
             const severity = query.severity;
 
@@ -135,44 +240,44 @@ patientAuditRouter.get(
             if (severity) where.severity = severity;
 
             const [alerts, unacknowledged] = await Promise.all([
-            prisma.accessAlert.findMany({
-                where,
-                orderBy: { createdAt: 'desc' },
-                take: 50,
-                include: {
-                    auditLog: {
-                        select: { accessEventHash: true }
+                prisma.accessAlert.findMany({
+                    where,
+                    orderBy: { createdAt: 'desc' },
+                    take: 50,
+                    include: {
+                        auditLog: {
+                            select: { accessEventHash: true }
+                        }
                     }
-                }
-            }),
-            prisma.accessAlert.count({
-                where: { patientId, acknowledgedAt: null }
-            })
-        ]);
+                }),
+                prisma.accessAlert.count({
+                    where: { patientId, acknowledgedAt: null }
+                })
+            ]);
 
-        res.json({
-            alerts: alerts.map(a => ({
-                id: a.id,
-                type: a.type,
-                severity: a.severity,
-                message: a.message,
-                accessEventHash: a.auditLog?.accessEventHash || '',
-                createdAt: a.createdAt.toISOString(),
-                acknowledgedAt: a.acknowledgedAt?.toISOString(),
-                relatedAccess: {
-                    clinician: a.relatedClinician || 'Unknown',
-                    resourceType: a.relatedResourceType || 'Unknown'
-                },
-                suggestedAction: a.suggestedAction
-            })),
-            unacknowledged
-        });
+            res.json({
+                alerts: alerts.map(a => ({
+                    id: a.id,
+                    type: a.type,
+                    severity: a.severity,
+                    message: a.message,
+                    accessEventHash: a.auditLog?.accessEventHash || '',
+                    createdAt: a.createdAt.toISOString(),
+                    acknowledgedAt: a.acknowledgedAt?.toISOString(),
+                    relatedAccess: {
+                        clinician: a.relatedClinician || 'Unknown',
+                        resourceType: a.relatedResourceType || 'Unknown'
+                    },
+                    suggestedAction: a.suggestedAction
+                })),
+                unacknowledged
+            });
 
-    } catch (error) {
-        logger.error({ error, patientId: req.params.patientId }, 'Failed to fetch alerts');
-        res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to fetch alerts' });
-    }
-});
+        } catch (error) {
+            logger.error({ error, patientId: req.params.patientId }, 'Failed to fetch alerts');
+            res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to fetch alerts' });
+        }
+    });
 
 // POST /api/patient/:patientId/access-alerts/:alertId/acknowledge
 
@@ -189,34 +294,34 @@ patientAuditRouter.post(
                 where: { id: alertId, patientId }
             });
 
-        if (!alert) {
-            throw new ResourceNotFoundError('AccessAlert', alertId);
-        }
-
-        const updated = await prisma.accessAlert.update({
-            where: { id: alertId },
-            data: {
-                acknowledgedAt: body.acknowledged ? new Date() : null,
-                acknowledgedNotes: body.notes
+            if (!alert) {
+                throw new ResourceNotFoundError('AccessAlert', alertId);
             }
-        });
 
-        res.json({
-            success: true,
-            alert: {
-                id: updated.id,
-                acknowledgedAt: updated.acknowledgedAt?.toISOString()
+            const updated = await prisma.accessAlert.update({
+                where: { id: alertId },
+                data: {
+                    acknowledgedAt: body.acknowledged ? new Date() : null,
+                    acknowledgedNotes: body.notes
+                }
+            });
+
+            res.json({
+                success: true,
+                alert: {
+                    id: updated.id,
+                    acknowledgedAt: updated.acknowledgedAt?.toISOString()
+                }
+            });
+
+        } catch (error) {
+            if (error instanceof ValidationError || error instanceof ResourceNotFoundError) {
+                return res.status((error as any).statusCode).json((error as any).toJSON());
             }
-        });
-
-    } catch (error) {
-        if (error instanceof ValidationError || error instanceof ResourceNotFoundError) {
-            return res.status((error as any).statusCode).json((error as any).toJSON());
+            logger.error({ error, alertId: req.params.alertId }, 'Failed to acknowledge alert');
+            res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to acknowledge alert' });
         }
-        logger.error({ error, alertId: req.params.alertId }, 'Failed to acknowledge alert');
-        res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to acknowledge alert' });
-    }
-});
+    });
 
 // Helper: Record Access Event
 
@@ -259,7 +364,7 @@ export async function recordAccessEvent(data: {
     return record.id;
 }
 
-// Helper: Create Alerts
+// Helper: Create Alerts (respects patient preferences)
 
 async function checkAndCreateAlerts(auditLogId: string, data: {
     patientId: string;
@@ -271,8 +376,19 @@ async function checkAndCreateAlerts(auditLogId: string, data: {
     const alerts: any[] = [];
     const hour = new Date().getHours();
 
-    // After-hours check
-    if (hour < 7 || hour >= 19) {
+    // Get patient preferences to check what alerts they want
+    let prefs: any = null;
+    try {
+        prefs = await prisma.patientPreferences.findUnique({
+            where: { patientId: data.patientId }
+        });
+    } catch (e) {
+        // Continue with default (create all alerts)
+    }
+
+    // After-hours check (only if patient wants these alerts)
+    const wantsAfterHoursAlerts = prefs?.alertsForAfterHours ?? true;
+    if ((hour < 7 || hour >= 19) && wantsAfterHoursAlerts) {
         alerts.push({
             patientId: data.patientId,
             auditLogId,
@@ -283,10 +399,18 @@ async function checkAndCreateAlerts(auditLogId: string, data: {
             relatedResourceType: data.resourceType,
             suggestedAction: 'Review if this access was expected'
         });
+
+        // Send Push Notification
+        await pushNotificationService.notifyAfterHoursAccess(
+            data.patientId,
+            data.clinicianName || data.clinicianId,
+            hour
+        ).catch(e => logger.warn({ err: e }, 'Failed to send after-hours push'));
     }
 
-    // Break-glass alert
-    if (data.isBreakGlass) {
+    // Break-glass alert (only if patient wants these alerts)
+    const wantsBreakGlassAlerts = prefs?.alertsForBreakGlass ?? true;
+    if (data.isBreakGlass && wantsBreakGlassAlerts) {
         alerts.push({
             patientId: data.patientId,
             auditLogId,
@@ -297,31 +421,49 @@ async function checkAndCreateAlerts(auditLogId: string, data: {
             relatedResourceType: data.resourceType,
             suggestedAction: 'Verify this was a legitimate emergency'
         });
+
+        // Send Push Notification
+        await pushNotificationService.notifyBreakGlassAccess(
+            data.patientId,
+            data.clinicianName || data.clinicianId,
+            'Medical Emergency' // Default fallback, specific reason should be passed if available
+        ).catch(e => logger.warn({ err: e }, 'Failed to send break-glass push'));
     }
 
-    // New provider check
-    const previousAccess = await prisma.auditLog.count({
-        where: {
-            patientId: data.patientId,
-            clinicianId: data.clinicianId,
-            id: { not: auditLogId }
-        }
-    });
-
-    if (previousAccess === 0) {
-        alerts.push({
-            patientId: data.patientId,
-            auditLogId,
-            type: 'NEW_PROVIDER',
-            severity: 'LOW',
-            message: `First-time access by ${data.clinicianName || data.clinicianId}`,
-            relatedClinician: data.clinicianName || data.clinicianId,
-            relatedResourceType: data.resourceType,
-            suggestedAction: 'Confirm you are receiving care from this provider'
+    // New provider check (only if patient wants these alerts)
+    const wantsNewProviderAlerts = prefs?.alertsForNewProvider ?? true;
+    if (wantsNewProviderAlerts) {
+        const previousAccess = await prisma.auditLog.count({
+            where: {
+                patientId: data.patientId,
+                clinicianId: data.clinicianId,
+                id: { not: auditLogId }
+            }
         });
+
+        if (previousAccess === 0) {
+            alerts.push({
+                patientId: data.patientId,
+                auditLogId,
+                type: 'NEW_PROVIDER',
+                severity: 'LOW',
+                message: `First-time access by ${data.clinicianName || data.clinicianId}`,
+                relatedClinician: data.clinicianName || data.clinicianId,
+                relatedResourceType: data.resourceType,
+                suggestedAction: 'Confirm you are receiving care from this provider'
+            });
+
+            // Send Push Notification
+            await pushNotificationService.notifyNewProviderAccess(
+                data.patientId,
+                data.clinicianName || data.clinicianId,
+                'Unknown Dept' // Dept not currently passed in data object
+            ).catch(e => logger.warn({ err: e }, 'Failed to send new provider push'));
+        }
     }
 
     if (alerts.length > 0) {
         await prisma.accessAlert.createMany({ data: alerts });
+        logger.info({ patientId: data.patientId, alertCount: alerts.length }, 'Created access alerts');
     }
 }
