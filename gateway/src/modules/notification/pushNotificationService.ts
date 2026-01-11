@@ -9,8 +9,8 @@
  * - New provider access alerts
  */
 
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
 
 // Expo Push API endpoint
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';

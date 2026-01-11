@@ -9,11 +9,11 @@
 
 import { buildPoseidon } from 'circomlibjs';
 import crypto from 'crypto';
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
-import { getRedis } from '../db/redis.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
+import { getRedis } from '../../db/redis.js';
 import { ethers } from 'ethers';
-import { env } from '../config/env.js';
+import { env } from '../../config/env.js';
 
 // Type imports
 type Poseidon = Awaited<ReturnType<typeof buildPoseidon>>;

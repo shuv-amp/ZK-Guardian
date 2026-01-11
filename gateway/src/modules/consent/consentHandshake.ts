@@ -3,9 +3,9 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
-import { getRedis } from '../db/redis.js';
-import { logger } from '../lib/logger.js';
-import { env } from '../config/env.js';
+import { getRedis } from '../../db/redis.js';
+import { logger } from '../../lib/logger.js';
+import { env } from '../../config/env.js';
 import Redis from 'ioredis';
 
 interface ConsentResponse {

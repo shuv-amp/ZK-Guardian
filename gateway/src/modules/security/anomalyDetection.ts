@@ -3,9 +3,9 @@
  * Sherlock Holmes for access logs. Spots weird spikes and clusters.
  */
 
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
-import { webhookService } from './webhookService.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
+import { webhookService } from '../notification/webhookService.js';
 
 export interface Anomaly {
     type: 'HIGH_VOLUME' | 'OFF_HOURS_SPIKE' | 'BREAK_GLASS_CLUSTER';
@@ -153,7 +153,7 @@ export class AnomalyDetectionService {
                         details: anomaly.description,
                         detectedAt: anomaly.detectedAt.toISOString(),
                         metadata: anomaly.metadata
-                    }).catch(err => logger.error({ err }, 'Failed to emit anomaly webhook'));
+                    }).catch((err: any) => logger.error({ err }, 'Failed to emit anomaly webhook'));
                 }
             }
 

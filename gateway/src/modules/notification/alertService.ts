@@ -1,6 +1,6 @@
-import { AccessRecord, AccessAlert, AlertSeverity, AlertType } from '../types/audit.js';
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
+import { AccessRecord, AccessAlert, AlertSeverity, AlertType } from '../../types/audit.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
 
 /**
  * Alert Service

@@ -12,7 +12,7 @@ import { env } from '../config/env.js';
 import { prisma } from '../db/client.js';
 import { getRedis } from '../db/redis.js';
 import { logger } from '../lib/logger.js';
-import { zkProofService } from '../services/zkProofService.js';
+import { zkProofService } from '../modules/security/zkProofService.js';
 import os from 'os';
 
 export const healthRouter: Router = Router();

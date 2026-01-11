@@ -8,9 +8,9 @@
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
-import { tenantService } from '../services/tenantService.js';
-import { apiKeyService, APIScope } from '../services/apiKeyService.js';
-import { webhookService, WebhookEventType } from '../services/webhookService.js';
+import { tenantService } from '../modules/identity/tenantService.js';
+import { apiKeyService, APIScope } from '../modules/identity/apiKeyService.js';
+import { webhookService, WebhookEventType } from '../modules/notification/webhookService.js';
 import { keysRouter } from './admin/keys.js';
 import { complianceRouter } from './admin/compliance.js';
 import { logger } from '../lib/logger.js';

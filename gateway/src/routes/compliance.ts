@@ -7,7 +7,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { complianceService } from '../lib/complianceService.js';
-import { anomalyDetectionService } from '../services/anomalyDetection.js';
+import { anomalyDetectionService } from '../modules/security/anomalyDetection.js';
 import { logger } from '../lib/logger.js';
 import { AuthorizationError } from '../lib/errors.js';
 

@@ -10,7 +10,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { tenantService, Tenant } from '../services/tenantService.js';
+import { tenantService, Tenant } from '../modules/identity/tenantService.js';
 import { logger } from '../lib/logger.js';
 
 // Extend Express Request

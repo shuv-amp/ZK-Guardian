@@ -20,7 +20,7 @@ import { env } from '../config/env.js';
 import { validateOrThrow, BreakGlassPayloadSchema } from '../schemas/validation.js';
 import { validateBody, validateParams, PatientParamsSchema } from '../middleware/validation.js';
 import { generateAndSubmitBreakGlassProof } from '../lib/zkProofService.js';
-import { webhookService } from '../services/webhookService.js';
+import { webhookService } from '../modules/notification/webhookService.js';
 
 export const breakGlassRouter: Router = Router();
 

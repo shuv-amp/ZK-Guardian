@@ -3,7 +3,7 @@ import express, { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db/client.js';
 import { logger } from '../lib/logger.js';
-import { PatientIdentityService } from '../services/identityService.js';
+import { PatientIdentityService } from '../modules/identity/identityService.js';
 import { AuthorizationError, ValidationError } from '../lib/errors.js';
 
 export const identityRouter: Router = Router();

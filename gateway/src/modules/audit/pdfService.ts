@@ -6,8 +6,8 @@
  */
 
 import PDFDocument from 'pdfkit';
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
 
 export class PDFService {
 

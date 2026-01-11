@@ -10,8 +10,8 @@ import {
 } from '../schemas/validation.js';
 import { ValidationError, ResourceNotFoundError } from '../lib/errors.js';
 import { validateQuery, validateParams, validateBody, PatientParamsSchema, PatientAlertParamsSchema } from '../middleware/validation.js';
-import { pushNotificationService } from '../services/pushNotificationService.js';
-import { pdfService } from '../services/pdfService.js';
+import { pushNotificationService } from '../modules/notification/pushNotificationService.js';
+import { pdfService } from '../modules/audit/pdfService.js';
 
 export const patientAuditRouter: Router = Router();
 

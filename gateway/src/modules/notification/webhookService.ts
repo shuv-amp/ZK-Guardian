@@ -9,8 +9,8 @@
  * - Dead letter queue for failed deliveries
  */
 
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
 import crypto from 'crypto';
 import axios, { AxiosError } from 'axios';
 

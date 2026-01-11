@@ -77,7 +77,8 @@ const envSchema = z.object({
 
     // Feature flags
     ENABLE_TRACING: z.coerce.boolean().default(false),
-    ENABLE_WORKER_POOL: z.coerce.boolean().default(false)
+    ENABLE_WORKER_POOL: z.coerce.boolean().default(false),
+    ENABLE_SYNTHETIC_CONSENT: z.coerce.boolean().default(false)
 });
 
 function loadEnv() {

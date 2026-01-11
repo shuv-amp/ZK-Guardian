@@ -9,8 +9,8 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { apiKeyService, ValidatedAPIKey, APIScope } from '../services/apiKeyService.js';
-import { tenantService } from '../services/tenantService.js';
+import { apiKeyService, ValidatedAPIKey, APIScope } from '../modules/identity/apiKeyService.js';
+import { tenantService } from '../modules/identity/tenantService.js';
 import { logger } from '../lib/logger.js';
 import { rateLimitCounter } from '../metrics/prometheus.js';
 

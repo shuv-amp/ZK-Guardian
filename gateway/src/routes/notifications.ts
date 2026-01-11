@@ -7,7 +7,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { validateBody } from '../middleware/validation.js';
-import { pushNotificationService } from '../services/pushNotificationService.js';
+import { pushNotificationService } from '../modules/notification/pushNotificationService.js';
 import { logger } from '../lib/logger.js';
 
 export const notificationsRouter: Router = Router();

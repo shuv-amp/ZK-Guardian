@@ -30,14 +30,14 @@ import { breakGlassMiddleware } from './middleware/breakGlass.js';
 import { rateLimitMiddleware } from './middleware/rateLimit.js';
 import { apiKeyAuth, flexibleAuth } from './middleware/apiKeyAuth.js';
 import { tenantMiddleware } from './middleware/tenantMiddleware.js';
-import { setupConsentWebSocket } from './services/consentHandshake.js';
-import { batchAuditService } from './services/batchAuditService.js';
-import { webhookService } from './services/webhookService.js';
+import { setupConsentWebSocket } from './modules/consent/consentHandshake.js';
+import { batchAuditService } from './modules/audit/batchAuditService.js';
+import { webhookService } from './modules/notification/webhookService.js';
 import { metricsRouter } from './metrics/prometheus.js';
 import { logger, logSystemEvent, createRequestLogger } from './lib/logger.js';
 import { isAppError, toErrorResponse } from './lib/errors.js';
 import { complianceService } from './lib/complianceService.js';
-import { anomalyDetectionService } from './services/anomalyDetection.js';
+import { anomalyDetectionService } from './modules/security/anomalyDetection.js';
 
 const app: Express = express();
 const server = createServer(app);
@@ -166,7 +166,7 @@ async function startup(): Promise<void> {
         }
 
         // Initialize ZK proof service
-        const { zkProofService } = await import('./services/zkProofService.js');
+        const { zkProofService } = await import('./modules/security/zkProofService.js');
         await zkProofService.initialize();
 
         // Verify circuit integrity (ZK1)

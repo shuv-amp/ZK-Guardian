@@ -1,8 +1,8 @@
 import { ethers } from 'ethers';
-import { prisma } from '../db/client.js';
-import { enqueueBatchProof, dequeueBatchProofs, getBatchQueueSize } from '../db/redis.js';
-import { logger, logSystemEvent } from '../lib/logger.js';
-import { updateBatchQueueSize, recordGasUsed } from '../metrics/prometheus.js';
+import { prisma } from '../../db/client.js';
+import { enqueueBatchProof, dequeueBatchProofs, getBatchQueueSize } from '../../db/redis.js';
+import { logger, logSystemEvent } from '../../lib/logger.js';
+import { updateBatchQueueSize, recordGasUsed } from '../../metrics/prometheus.js';
 
 /**
  * Batch Audit Service

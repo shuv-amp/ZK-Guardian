@@ -4,9 +4,9 @@
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
-import { consentHandshakeService } from '../services/consentHandshake.js';
-import { consentService } from '../services/consentService.js';
-import { consentTemplateService } from '../services/consentTemplates.js';
+import { consentHandshakeService } from '../modules/consent/consentHandshake.js';
+import { consentService } from '../modules/consent/consentService.js';
+import { consentTemplateService } from '../modules/consent/consentTemplates.js';
 import { AuthorizationError, ValidationError, ResourceNotFoundError } from '../lib/errors.js';
 import { z } from 'zod';
 import axios from 'axios';
@@ -17,7 +17,7 @@ import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
 import { validateQuery, validateBody } from '../middleware/validation.js';
 import { hashFhirConsent } from '../utils/fhirToPoseidon.js';
-import { webhookService } from '../services/webhookService.js';
+import { webhookService } from '../modules/notification/webhookService.js';
 
 export const consentsRouter: Router = Router({ mergeParams: true });
 

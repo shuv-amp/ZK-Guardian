@@ -5,8 +5,8 @@
  * "One-click" consent configuration for common scenarios.
  */
 
-import { logger } from '../lib/logger.js';
-import { prisma } from '../db/client.js';
+import { logger } from '../../lib/logger.js';
+import { prisma } from '../../db/client.js';
 import { consentService } from './consentService.js';
 
 export interface ConsentTemplate {

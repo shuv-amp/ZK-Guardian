@@ -6,7 +6,7 @@
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
-import { complianceReportService } from '../../services/complianceReportService.js';
+import { complianceReportService } from '../../modules/audit/complianceReportService.js';
 import { requireScopes } from '../../middleware/apiKeyAuth.js';
 import { logger } from '../../lib/logger.js';
 import { prisma } from '../../db/client.js';

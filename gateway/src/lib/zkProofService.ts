@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { env } from '../config/env.js';
 import { logger } from './logger.js';
-import { merkleTreeService } from '../services/merkleTreeService.js';
+import { merkleTreeService } from '../modules/audit/merkleTreeService.js';
 
 // Circuit paths (relative to gateway package)
 const CIRCUITS_DIR = path.join(process.cwd(), '../circuits/build');

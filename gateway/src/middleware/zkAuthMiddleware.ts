@@ -1,8 +1,8 @@
 
 import { Request, Response, NextFunction } from 'express';
-import { zkProofService, AccessRequest } from '../services/zkProofService.js';
-import { consentHandshakeService } from '../services/consentHandshake.js';
-import { replayProtection } from '../services/replayProtection.js';
+import { zkProofService, AccessRequest } from '../modules/security/zkProofService.js';
+import { consentHandshakeService } from '../modules/consent/consentHandshake.js';
+import { replayProtection } from '../modules/security/replayProtection.js';
 import { recordAccessEvent } from '../routes/patientAudit.js';
 import { getRedis } from '../db/redis.js';
 import { ethers } from 'ethers';
@@ -12,7 +12,7 @@ import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../lib/logger.js';
 import { accessRequestsCounter, consentDenialsCounter } from '../metrics/prometheus.js';
-import { webhookService } from '../services/webhookService.js';
+import { webhookService } from '../modules/notification/webhookService.js';
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || 'http://localhost:8080/fhir';
 

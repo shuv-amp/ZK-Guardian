@@ -9,7 +9,7 @@ import { fhirRouter } from './fhir.js';
 
 // Mock ZK Proof Service
 const mockGenerate = vi.fn();
-vi.mock('../services/zkProofService', () => ({
+vi.mock('../modules/security/zkProofService', () => ({
     zkProofService: {
         generateAccessProof: (...args: any[]) => mockGenerate(...args)
     }
@@ -17,7 +17,7 @@ vi.mock('../services/zkProofService', () => ({
 
 // Mock Consent Handshake
 const mockRequestConsent = vi.fn();
-vi.mock('../services/consentHandshake', () => ({
+vi.mock('../modules/consent/consentHandshake', () => ({
     consentHandshakeService: {
         requestConsent: (...args: any[]) => mockRequestConsent(...args)
     }

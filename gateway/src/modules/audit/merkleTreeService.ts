@@ -1,6 +1,6 @@
 
 import { buildPoseidon } from 'circomlibjs';
-import { logger } from '../lib/logger.js';
+import { logger } from '../../lib/logger.js';
 // We use a simple in-memory implementation for the demo.
 // In production, this should be backed by Redis or a database.
 

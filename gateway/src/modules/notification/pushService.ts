@@ -8,9 +8,9 @@
  */
 
 import { Expo, ExpoPushMessage } from 'expo-server-sdk';
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
-import { env } from '../config/env.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
+import { env } from '../../config/env.js';
 
 export class PushService {
     private expo: Expo;

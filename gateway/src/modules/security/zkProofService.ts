@@ -14,11 +14,11 @@ import {
     stringToFieldElement,
     initPoseidon,
     CircuitInputs
-} from "../utils/fhirToPoseidon.js";
-import { logger } from "../lib/logger.js";
-import { env } from "../config/env.js";
-import { checkConsentNotRevoked } from "../lib/revocationChecker.js";
-import { batchQueueGauge, proofGenerationHistogram } from "../metrics/prometheus.js";
+} from "../../utils/fhirToPoseidon.js";
+import { logger } from "../../lib/logger.js";
+import { env } from "../../config/env.js";
+import { checkConsentNotRevoked } from "../../lib/revocationChecker.js";
+import { batchQueueGauge, proofGenerationHistogram } from "../../metrics/prometheus.js";
 
 // In production, these should be environment variables or copied to build dir
 // For monorepo dev, we point to the siblings
@@ -30,10 +30,10 @@ const VERIFICATION_KEY = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_ve
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || "http://localhost:8080/fhir";
 
-// Proof generation timeout (per SECURITY_AUDIT_CHECKLIST.md ZK2)
-const PROOF_TIMEOUT_MS = 30000; // 30 seconds
+// 30s timeout to prevent hanging request
+const PROOF_TIMEOUT_MS = 30000;
 
-// Minimum free memory required to start proof (ZK5)
+// Need at least 512MB free to run proof generation safely
 const MIN_FREE_MEMORY_MB = 512;
 
 export interface AccessRequest {
@@ -85,7 +85,7 @@ class ZKProofService {
     }
 
     /**
-     * Core function: Fetches consent, generates proof, returns formatting for contract
+     * core logic: fetch consent -> gen proof -> format for chain
      */
     async generateAccessProof(request: AccessRequest): Promise<ProofResult> {
         if (!this.initialized) await this.initialize();
@@ -105,7 +105,7 @@ class ZKProofService {
             throw new Error("NO_ACTIVE_CONSENT");
         }
 
-        // 1.5. CRITICAL: Check consent not revoked on-chain (SECURITY_AUDIT H5)
+        // on-chain revocation check
         const consentHash = await hashFhirConsent(consent);
         await checkConsentNotRevoked(consentHash);
 
@@ -130,7 +130,7 @@ class ZKProofService {
             queueSize: this.queue.length
         }, `Queuing ZK proof for ${resourceType} access`);
 
-        // 3. Generate Proof with timeout (ZK2: 30s max) AND Queue (ZK4: max 100)
+        // generate with timeout and queue limits
         const { proof, publicSignals } = await this.enqueueProofGeneration(() =>
             this.generateProofWithTimeout(
                 inputs,
@@ -159,13 +159,14 @@ class ZKProofService {
      */
     private enqueueProofGeneration<T>(task: () => Promise<T>): Promise<T> {
         return new Promise((resolve, reject) => {
+            // limit queue size
             if (this.queue.length >= this.MAX_QUEUE_SIZE) {
                 logger.warn("ZK Proof queue full, rejecting request");
                 return reject(new Error("PROOF_QUEUE_FULL"));
             }
 
             this.queue.push({ task, resolve, reject });
-            batchQueueGauge.set(this.queue.length); // Update metric
+            batchQueueGauge.set(this.queue.length);
             this.processQueue();
         });
     }
@@ -231,9 +232,9 @@ class ZKProofService {
 
             const bundle = response.data;
             if (!bundle.entry || bundle.entry.length === 0) {
-                // No consent found in FHIR - use synthetic consent in dev mode
-                if (env.NODE_ENV !== 'production') {
-                    logger.warn({ patientId }, 'No FHIR consent found, using synthetic consent for development');
+                // fake consent for devs if configured
+                if (env.ENABLE_SYNTHETIC_CONSENT) {
+                    logger.warn({ patientId }, 'using synthetic consent (dev flag on)');
                     return this.createSyntheticConsent(patientId);
                 }
                 return null;
@@ -242,8 +243,8 @@ class ZKProofService {
             return bundle.entry[0].resource;
         } catch (error: any) {
             // In development, return synthetic consent to enable testing without FHIR
-            if (env.NODE_ENV !== 'production') {
-                logger.warn({ patientId, error: error.message }, 'FHIR unavailable, using synthetic consent for development');
+            if (env.ENABLE_SYNTHETIC_CONSENT) {
+                logger.warn({ patientId, error: error.message }, 'FHIR unavailable, using synthetic consent (ENABLE_SYNTHETIC_CONSENT=true)');
                 return this.createSyntheticConsent(patientId);
             }
             logger.warn({ error: error.message }, `Failed to fetch consent for ${patientId}`);
@@ -300,8 +301,7 @@ class ZKProofService {
 
 
     /**
-     * Generate proof with timeout to prevent hung requests (ZK2 requirement)
-     * Wraps snarkjs.groth16.fullProve with a 30-second timeout
+     * wraps proofer with a hard timeout
      */
     private async generateProofWithTimeout(
         inputs: any,
@@ -359,8 +359,7 @@ class ZKProofService {
     }
 
     /**
-     * Verify circuit files exist and have valid checksums (ZK1 requirement)
-     * Should be called at startup to ensure circuit integrity
+     * checks if circuit files are healthy
      */
     async verifyCircuitIntegrity(): Promise<{
         valid: boolean;

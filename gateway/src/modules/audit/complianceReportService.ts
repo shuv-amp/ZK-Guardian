@@ -9,8 +9,8 @@
  * - M2, M3: Monitoring metrics
  */
 
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
 
 export interface ComplianceReport {
     generatedAt: string;

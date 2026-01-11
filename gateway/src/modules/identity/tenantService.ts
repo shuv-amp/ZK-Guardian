@@ -8,8 +8,8 @@
  * - Secure tenant context propagation
  */
 
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
 import crypto from 'crypto';
 
 // Types

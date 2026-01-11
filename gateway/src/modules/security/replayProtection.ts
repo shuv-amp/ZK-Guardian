@@ -12,9 +12,9 @@
  */
 
 import { createHash } from 'crypto';
-import { getRedis } from '../db/redis.js';
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
+import { getRedis } from '../../db/redis.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
 
 // Redis key prefix for proof hashes
 const PROOF_HASH_PREFIX = 'proof:used:';

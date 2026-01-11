@@ -3,11 +3,11 @@
  * Handling all things consent here. Keeps our local DB and the FHIR server in sync.
  */
 
-import { prisma } from '../db/client.js';
-import { logger } from '../lib/logger.js';
-import { env } from '../config/env.js';
+import { prisma } from '../../db/client.js';
+import { logger } from '../../lib/logger.js';
+import { env } from '../../config/env.js';
 import axios from 'axios';
-import { hashFhirConsent } from '../utils/fhirToPoseidon.js';
+import { hashFhirConsent } from '../../utils/fhirToPoseidon.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || 'http://localhost:8080/fhir';
