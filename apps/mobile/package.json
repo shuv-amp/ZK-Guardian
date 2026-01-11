@@ -10,7 +10,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "jest"
+    "test": "jest",
+    "test:e2e": "maestro test .maestro/flow-consent-approval.yaml"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.0.4",

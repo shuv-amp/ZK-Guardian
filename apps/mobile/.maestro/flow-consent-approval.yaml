@@ -1,0 +1,4 @@
+appId: com.zkguardian.mobile
+---
+- launchApp
+- assertVisible: ".*(Login|Sign In|Welcome).*"
