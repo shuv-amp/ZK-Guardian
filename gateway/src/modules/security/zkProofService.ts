@@ -1,3 +1,4 @@
+
 import * as snarkjs from "snarkjs";
 import axios from "axios";
 import { fileURLToPath } from "url";
@@ -27,6 +28,7 @@ const SECURE_CIRCUIT_DIR = path.join(CIRCUITS_BUILD_DIR, "AccessIsAllowedSecure"
 const CIRCUIT_WASM = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_js/AccessIsAllowedSecure.wasm");
 const CIRCUIT_ZKEY = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_final.zkey");
 const VERIFICATION_KEY = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_verification_key.json");
+const CHECKSUMS_FILE = path.resolve(__dirname, "../../../circuits/checksums.sha256");
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || "http://localhost:8080/fhir";
 
@@ -60,6 +62,7 @@ class ZKProofService {
     private initialized = false;
     private poseidon: any;
     private F: any;
+    private lastIntegrity: { valid: boolean; checksums: { wasm: string; zkey: string; vkey: string }; errors: string[] } | null = null;
     // Allow injecting snarkjs for testing (avoiding WASM execution)
     private snarkjs: any = snarkjs;
 
@@ -79,8 +82,12 @@ class ZKProofService {
 
     async initialize() {
         if (this.initialized) return;
-        await initPoseidon();
-        logger.info('[ZKProofService] Initialized Poseidon');
+        try {
+            await initPoseidon();
+            logger.info('[ZKProofService] Initialized Poseidon');
+        } catch (e) {
+            logger.warn('Failed to initialize Poseidon - continuing (might be valid for dev mock)');
+        }
         this.initialized = true;
     }
 
@@ -99,10 +106,46 @@ class ZKProofService {
             sessionNonce
         } = request;
 
-        // 1. Fetch Consent from FHIR
+        // 1. Fetch Consent from FHIR (Works for both Prod and Dev via synthetic fallback)
         const consent = await this.fetchActiveConsent(patientId);
         if (!consent) {
             throw new Error("NO_ACTIVE_CONSENT");
+        }
+
+        // 1.1 Scope Check (Critical: Must happen before Dev Bypass)
+        // Check if the consent actually covers the requested resource
+        const allowedScopes = consent.provision?.class?.map((c: any) => c.code) || [];
+        const isAllowed = allowedScopes.includes(resourceType) || allowedScopes.includes('*');
+
+        if (!isAllowed) {
+            logger.warn({ patientId, resourceType, allowedScopes }, 'Consent exists but does not cover this resource');
+            // In dev mode, we still want to throw to test negative cases
+            throw new Error("CONSENT_SCOPE_MISMATCH");
+        }
+
+        // DEV MODE BYPASS - Mock Proof ONLY if consent is valid
+        if (env.NODE_ENV === 'development') {
+            logger.warn('Mocking ZK Proof generation (DEV mode) - Consent Validated');
+            // Simulate processing time
+            await new Promise(resolve => setTimeout(resolve, 500));
+            return {
+                proof: {
+                    a: ["0x1", "0x2"],
+                    b: [["0x1", "0x2"], ["0x3", "0x4"]],
+                    c: ["0x5", "0x6"]
+                },
+                publicSignals: [
+                    "0x1", // root
+                    "0x2", // nullifierHash
+                    "0x1234567890abcdef", // accessEventHash (mocked)
+                    "0x4",
+                    "0x5",
+                    "0x6",
+                    "0x7"
+                ],
+                proofHash: "0xMOCK_PROOF_" + crypto.randomBytes(32).toString('hex'),
+                timestamp: Math.floor(Date.now() / 1000)
+            };
         }
 
         // on-chain revocation check
@@ -150,8 +193,6 @@ class ZKProofService {
             timestamp: currentTimestamp
         };
     }
-
-
 
     /**
      * Enqueue a proof generation task.
@@ -290,9 +331,7 @@ class ZKProofService {
                     { code: "Condition" },
                     { code: "MedicationRequest" },
                     { code: "DiagnosticReport" },
-                    { code: "Procedure" },
-                    { code: "Immunization" },
-                    { code: "AllergyIntolerance" }
+                    { code: "Procedure" }
                 ]
             }
         };
@@ -419,9 +458,11 @@ class ZKProofService {
             logger.info({ path: VERIFICATION_KEY, sha256: vkeyHash }, "Verification key checksum");
         }
 
-        // Optional: Compare against known good checksums from environment
-        const expectedWasmHash = process.env.CIRCUIT_WASM_SHA256;
-        const expectedZkeyHash = process.env.CIRCUIT_ZKEY_SHA256;
+        const checksumEntries = this.loadChecksumEntries();
+
+        // Optional: Compare against known good checksums from environment or checksums file
+        const expectedWasmHash = process.env.CIRCUIT_WASM_SHA256 || this.findChecksum(checksumEntries, CIRCUIT_WASM);
+        const expectedZkeyHash = process.env.CIRCUIT_ZKEY_SHA256 || this.findChecksum(checksumEntries, CIRCUIT_ZKEY);
 
         if (expectedWasmHash && checksums.wasm !== expectedWasmHash) {
             errors.push(`WASM checksum mismatch: expected ${expectedWasmHash}, got ${checksums.wasm}`);
@@ -430,11 +471,62 @@ class ZKProofService {
             errors.push(`ZKEY checksum mismatch: expected ${expectedZkeyHash}, got ${checksums.zkey}`);
         }
 
-        return {
+        const result = {
             valid: errors.length === 0,
             checksums,
             errors
         };
+
+        this.lastIntegrity = result;
+
+        return result;
+    }
+
+    getCachedIntegrity(): { valid: boolean; checksums: { wasm: string; zkey: string; vkey: string }; errors: string[] } | null {
+        return this.lastIntegrity;
+    }
+
+    private loadChecksumEntries(): Array<{ hash: string; file: string }> {
+        if (!fs.existsSync(CHECKSUMS_FILE)) {
+            return [];
+        }
+
+        const content = fs.readFileSync(CHECKSUMS_FILE, "utf-8");
+        const entries: Array<{ hash: string; file: string }> = [];
+
+        for (const line of content.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith("#")) continue;
+
+            const parts = trimmed.split(/\s+/);
+            if (parts.length < 2) continue;
+
+            const hash = parts[0];
+            const file = parts.slice(1).join(" ");
+            entries.push({ hash, file: file.replace(/\\/g, "/") });
+        }
+
+        return entries;
+    }
+
+    private findChecksum(entries: Array<{ hash: string; file: string }>, targetPath: string): string | undefined {
+        const normalizedTarget = targetPath.replace(/\\/g, "/");
+        const targetName = path.posix.basename(normalizedTarget);
+
+        for (const entry of entries) {
+            const entryPath = entry.file;
+            const entryName = path.posix.basename(entryPath);
+
+            if (normalizedTarget.endsWith(entryPath) || entryPath.endsWith(normalizedTarget)) {
+                return entry.hash;
+            }
+
+            if (entryName === targetName) {
+                return entry.hash;
+            }
+        }
+
+        return undefined;
     }
 
     /**

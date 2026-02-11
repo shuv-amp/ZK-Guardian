@@ -102,11 +102,21 @@ pnpm contracts:test
 - **HIPAA compliant**: Break-glass, audit trails, encryption
 - **SMART on FHIR**: OAuth 2.0 authentication
 
+## ✅ Production Readiness
+
+Before production deployment, ensure the following are complete:
+
+- SMART OAuth keys stored in a secrets manager.
+- Circuit artifacts pinned with checksums.
+- Contract addresses verified and recorded.
+- CI pipeline green on `main`.
+- Runbook validation for /health and /ready endpoints.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](SECURITY.md) for full requirements.
+
 ## 📄 License
 
 Apache 2.0 License - see [LICENSE](LICENSE) for details.
-
-> **⚠️ EDUCATIONAL / POC USE ONLY**: This is a Proof of Concept for verified healthcare access. Do not use in production without a professional security audit of the ZK circuits and smart contracts.
 
 ---
 

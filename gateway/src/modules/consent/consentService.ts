@@ -95,11 +95,20 @@ export class ConsentService {
             await axios.put(
                 `${HAPI_FHIR_URL}/Consent/${consentId}`,
                 fhirConsent,
-                { headers: { 'Content-Type': 'application/fhir+json' } }
+                {
+                    headers: { 'Content-Type': 'application/fhir+json' },
+                    timeout: 10000
+                }
             );
         } catch (fhirError: any) {
-            logger.error({ error: fhirError.response?.data || fhirError.message }, 'FHIR consent creation failed');
-            throw new Error('FHIR_ERROR: Failed to sync consent to FHIR server');
+            const errorDetails = fhirError.response?.data || fhirError.message;
+
+            if (env.NODE_ENV !== 'production') {
+                logger.warn({ error: errorDetails }, 'FHIR consent creation failed (DEV mode), continuing with local cache');
+            } else {
+                logger.error({ error: errorDetails }, 'FHIR consent creation failed');
+                throw new Error('FHIR_ERROR: Failed to sync consent to FHIR server');
+            }
         }
 
         // 3. Compute Hash

@@ -18,6 +18,7 @@ import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, FONTS, SHADOWS, SPACING, RADIUS } from '../../constants/Theme';
+import { smartAuth } from '../../services/SMARTAuthService';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -39,13 +40,17 @@ export default function LoginScreen() {
             const success = await login();
 
             if (success) {
-                // Navigate based on role after successful login
-                // Small delay to ensure auth state is fully updated
+                // Navigate based on SMART launch context, not the UI toggle
                 setTimeout(() => {
-                    if (selectedRole === 'patient') {
+                    const patientContext = smartAuth.getPatientId();
+                    const practitionerContext = smartAuth.getPractitionerId();
+
+                    if (patientContext) {
                         router.replace('/(patient)/dashboard');
-                    } else {
+                    } else if (practitionerContext) {
                         router.replace('/(clinician)/dashboard');
+                    } else {
+                        router.replace('/(auth)/login');
                     }
                 }, 200);
             } else {
@@ -75,6 +80,7 @@ export default function LoginScreen() {
                 {/* Role Selection */}
                 <View style={styles.roleContainer}>
                     <Text style={styles.roleLabel}>Select your role</Text>
+                    <Text style={styles.roleNote}>Your SMART login determines the final role.</Text>
 
                     <View style={styles.roleButtons}>
                         <TouchableOpacity
@@ -159,6 +165,13 @@ export default function LoginScreen() {
                         Secure • Private • HIPAA Compliant
                     </Text>
                 </View>
+
+                <View style={styles.registerRow}>
+                    <Text style={styles.registerText}>New to ZK Guardian?</Text>
+                    <TouchableOpacity onPress={() => router.replace('/(auth)/register')} disabled={loading}>
+                        <Text style={styles.registerLink}> Create account</Text>
+                    </TouchableOpacity>
+                </View>
             </View>
         </SafeAreaView>
     );
@@ -211,6 +224,13 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         textTransform: 'uppercase',
         letterSpacing: 1,
+    },
+    roleNote: {
+        fontSize: 12,
+        color: COLORS.textLight,
+        textAlign: 'center',
+        marginBottom: SPACING.m,
+        ...FONTS.regular,
     },
     roleButtons: {
         flexDirection: 'row',
@@ -283,5 +303,21 @@ const styles = StyleSheet.create({
         color: COLORS.textLight,
         fontSize: 12,
         ...FONTS.medium,
+    },
+    registerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: SPACING.l,
+    },
+    registerText: {
+        fontSize: 13,
+        color: COLORS.textSecondary,
+        ...FONTS.regular,
+    },
+    registerLink: {
+        fontSize: 13,
+        color: COLORS.primary,
+        ...FONTS.semibold,
     },
 });

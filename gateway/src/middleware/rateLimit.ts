@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { checkRateLimit } from '../db/redis.js';
 import { logger, logSecurityEvent } from '../lib/logger.js';
 import { RateLimitError } from '../lib/errors.js';
+import { env } from '../config/env.js';
 
 /**
  * Traffic Cop (Redis-backed)
@@ -19,13 +20,23 @@ interface RateLimitConfig {
     windowSeconds: number;
 }
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const RATE_LIMITS: Record<string, RateLimitConfig> = {
     'fhir-read': { limit: 100, windowSeconds: 60 },
     'fhir-search': { limit: 30, windowSeconds: 60 },
     'consent': { limit: 10, windowSeconds: 60 },
     'audit': { limit: 60, windowSeconds: 60 },
-    'break-glass': { limit: 3, windowSeconds: 3600 }, // Whoa there, only 3 emergencies per hour?
-    'default': { limit: 100, windowSeconds: 60 }
+    'break-glass': {
+        limit: env.RATE_LIMIT_BREAK_GLASS_LIMIT
+            ?? (isProduction ? 3 : 1000),
+        windowSeconds: env.RATE_LIMIT_BREAK_GLASS_WINDOW_SEC
+            ?? (isProduction ? 3600 : 60)
+    },
+    'default': {
+        limit: env.RATE_LIMIT_DEFAULT_LIMIT ?? 100,
+        windowSeconds: env.RATE_LIMIT_DEFAULT_WINDOW_SEC ?? 60
+    }
 };
 
 // Fallback memory store. If Redis dies, we don't want to crash.
@@ -60,13 +71,22 @@ export async function rateLimitMiddleware(
     res: Response,
     next: NextFunction
 ): Promise<void> {
+    const path = req.path.toLowerCase();
+    if (path.startsWith('/health') || path.startsWith('/ready') || path.startsWith('/metrics') || path.startsWith('/.well-known')) {
+        next();
+        return;
+    }
+
     const endpointType = getEndpointType(req);
     const config = RATE_LIMITS[endpointType];
     const key = getRateLimitKey(req, endpointType);
 
     try {
         // Try Redis first
-        const result = await checkRateLimit(key, config.limit, config.windowSeconds);
+        const result = await withTimeout(
+            checkRateLimit(key, config.limit, config.windowSeconds),
+            1500
+        );
 
         res.setHeader('X-RateLimit-Limit', config.limit);
         res.setHeader('X-RateLimit-Remaining', result.remaining);
@@ -120,6 +140,22 @@ export async function rateLimitMiddleware(
 
         next();
     }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Rate limit timeout')), timeoutMs);
+
+        promise
+            .then((result) => {
+                clearTimeout(timer);
+                resolve(result);
+            })
+            .catch((error) => {
+                clearTimeout(timer);
+                reject(error);
+            });
+    });
 }
 
 // Cleanup in-memory fallback periodically

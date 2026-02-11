@@ -17,6 +17,9 @@ import os from 'os';
 
 export const healthRouter: Router = Router();
 
+let cachedZkStatus: ServiceStatus | null = null;
+let cachedZkStatusAt = 0;
+
 interface HealthStatus {
     status: 'healthy' | 'degraded' | 'unhealthy';
     version: string;
@@ -167,10 +170,10 @@ async function checkBlockchainHealth(): Promise<ServiceStatus> {
 
     try {
         const provider = new ethers.JsonRpcProvider(env.POLYGON_AMOY_RPC);
-        const [blockNumber, network] = await Promise.all([
+        const [blockNumber, network] = await withTimeout(Promise.all([
             provider.getBlockNumber(),
             provider.getNetwork()
-        ]);
+        ]), 5000);
 
         return {
             status: 'connected',
@@ -190,13 +193,31 @@ async function checkBlockchainHealth(): Promise<ServiceStatus> {
     }
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error('Timeout')); 
+        }, timeoutMs);
+
+        promise
+            .then((result) => {
+                clearTimeout(timer);
+                resolve(result);
+            })
+            .catch((error) => {
+                clearTimeout(timer);
+                reject(error);
+            });
+    });
+}
+
 /**
  * Check PostgreSQL database connection
  */
 async function checkDatabaseHealth(): Promise<ServiceStatus> {
     const start = Date.now();
     try {
-        await prisma.$queryRaw`SELECT 1`;
+        await withTimeout(prisma.$queryRaw`SELECT 1`, 3000);
 
         return {
             status: 'connected',
@@ -218,7 +239,7 @@ async function checkRedisHealth(): Promise<ServiceStatus> {
     const start = Date.now();
     try {
         const redis = getRedis();
-        const pong = await redis.ping();
+        const pong = await withTimeout(redis.ping(), 3000);
 
         return {
             status: pong === 'PONG' ? 'connected' : 'degraded',
@@ -241,10 +262,34 @@ async function checkRedisHealth(): Promise<ServiceStatus> {
  */
 async function checkZkProverHealth(): Promise<ServiceStatus> {
     const start = Date.now();
+
+    if (cachedZkStatus && Date.now() - cachedZkStatusAt < 60000) {
+        return cachedZkStatus;
+    }
+
+    const cachedIntegrity = zkProofService.getCachedIntegrity?.();
+    if (cachedIntegrity) {
+        const status: ServiceStatus = {
+            status: cachedIntegrity.valid ? 'connected' : 'degraded',
+            latency: Date.now() - start,
+            details: {
+                valid: cachedIntegrity.valid,
+                checksums: cachedIntegrity.checksums,
+                errors: cachedIntegrity.errors
+            },
+            error: cachedIntegrity.valid ? undefined : 'Circuit integrity check failed'
+        };
+
+        cachedZkStatus = status;
+        cachedZkStatusAt = Date.now();
+
+        return status;
+    }
+
     try {
         const integrity = await zkProofService.verifyCircuitIntegrity();
 
-        return {
+        const status: ServiceStatus = {
             status: integrity.valid ? 'connected' : 'degraded',
             latency: Date.now() - start,
             details: {
@@ -254,12 +299,22 @@ async function checkZkProverHealth(): Promise<ServiceStatus> {
             },
             error: integrity.valid ? undefined : 'Circuit integrity check failed'
         };
+
+        cachedZkStatus = status;
+        cachedZkStatusAt = Date.now();
+
+        return status;
     } catch (error: any) {
-        return {
+        const status: ServiceStatus = {
             status: 'disconnected',
             latency: Date.now() - start,
             error: error.message
         };
+
+        cachedZkStatus = status;
+        cachedZkStatusAt = Date.now();
+
+        return status;
     }
 }
 

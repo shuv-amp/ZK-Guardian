@@ -4,6 +4,7 @@ import { logger } from '../lib/logger.js';
 import { validateParams } from '../middleware/validation.js';
 import { PractitionerIdSchema } from '../schemas/validation.js';
 import { z } from 'zod';
+import { env } from '../config/env.js';
 
 export const clinicianRouter: Router = Router();
 
@@ -21,7 +22,65 @@ clinicianRouter.get(
     async (req: Request, res: Response) => {
         try {
             const { clinicianId } = req.params;
-            
+
+            // Dev-only: Synthetic Proofs for "Riley" demo
+            if (env.NODE_ENV !== 'production' && env.ENABLE_SYNTHETIC_CONSENT) {
+                const syntheticProofs = [
+                    {
+                        id: 'proof-1',
+                        patientId: 'patient-riley',
+                        resourceType: 'Encounter',
+                        accessEventHash: '0x7f83b1657ff1...9a3b',
+                        status: 'verified',
+                        createdAt: new Date().toISOString(),
+                        blockchain: {
+                            txHash: '0x3a1b...8c9d',
+                            blockNumber: 184520,
+                            gasUsed: 145000
+                        }
+                    },
+                    {
+                        id: 'proof-2',
+                        patientId: 'patient-riley',
+                        resourceType: 'Observation',
+                        accessEventHash: '0x2c4d...e5f6',
+                        status: 'verified',
+                        createdAt: new Date(Date.now() - 5000).toISOString(),
+                        blockchain: {
+                            txHash: '0x9e8f...1a2b',
+                            blockNumber: 184519,
+                            gasUsed: 132000
+                        }
+                    },
+                    {
+                        id: 'proof-3',
+                        patientId: 'patient-riley',
+                        resourceType: 'MedicationRequest',
+                        accessEventHash: '0x5b6a...7c8d',
+                        status: 'queued',
+                        createdAt: new Date(Date.now() - 15000).toISOString()
+                    },
+                    {
+                        id: 'proof-4',
+                        patientId: 'patient-riley',
+                        resourceType: 'Condition',
+                        accessEventHash: '0x1a2b...3c4d',
+                        status: 'pending',
+                        createdAt: new Date(Date.now() - 30000).toISOString()
+                    }
+                ];
+
+                return res.json({
+                    proofs: syntheticProofs,
+                    pagination: {
+                        total: 4,
+                        limit: 50,
+                        offset: 0,
+                        hasMore: false
+                    }
+                });
+            }
+
             // Authorization check
             const smartContext = req.smartContext;
             if (smartContext?.practitioner && smartContext.practitioner !== clinicianId) {
@@ -38,7 +97,7 @@ clinicianRouter.get(
             // For now, we'll just return all logs as 'verified' (since they are audit logs)
             // or filter by 'verified' boolean if we had a status field.
             // The AuditLog model has 'verified' boolean.
-            
+
             if (query.status === 'verified') {
                 where.verified = true;
             } else if (query.status === 'failed') {

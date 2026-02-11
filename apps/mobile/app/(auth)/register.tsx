@@ -21,18 +21,22 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, FONTS, SHADOWS, SPACING, RADIUS } from '../../constants/Theme';
-import { NullifierManager } from '../../services/NullifierManager';
+import { useAuth } from '../../hooks/useAuth';
+import { smartAuth } from '../../services/SMARTAuthService';
+import { IdentityManager, ClinicianIdentityManager } from '../../services/IdentityManager';
 
 type UserRole = 'patient' | 'clinician';
 
 export default function RegisterScreen() {
     const router = useRouter();
+    const { login, getAccessToken } = useAuth();
     const [selectedRole, setSelectedRole] = useState<UserRole>('patient');
     const [loading, setLoading] = useState(false);
     const [formData, setFormData] = useState({
         email: '',
         fullName: '',
         organizationId: '', // For clinicians
+        licenseNumber: '', // For clinicians
     });
     const [errors, setErrors] = useState<{ [key: string]: string }>({});
 
@@ -56,7 +60,11 @@ export default function RegisterScreen() {
 
         // Organization ID for clinicians
         if (selectedRole === 'clinician' && !formData.organizationId.trim()) {
-            newErrors.organizationId = 'Organization ID is required for clinicians';
+            newErrors.organizationId = 'Facility ID is required for clinicians';
+        }
+
+        if (selectedRole === 'clinician' && !formData.licenseNumber.trim()) {
+            newErrors.licenseNumber = 'License number is required for clinicians';
         }
 
         setErrors(newErrors);
@@ -70,26 +78,43 @@ export default function RegisterScreen() {
         setLoading(true);
 
         try {
-            // For patients, generate and store the nullifier (privacy salt)
-            if (selectedRole === 'patient') {
-                await NullifierManager.getOrCreateNullifier();
-                console.log('[RegisterScreen] Patient nullifier generated');
+            const authSuccess = await login();
+            if (!authSuccess) {
+                throw new Error('SMART_AUTH_FAILED');
             }
 
-            // In a full implementation, this would call the SMART on FHIR registration endpoint
-            // For now, simulate registration and redirect to login
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            const accessToken = await getAccessToken();
+            if (!accessToken) {
+                throw new Error('ACCESS_TOKEN_MISSING');
+            }
 
-            Alert.alert(
-                'Registration Successful',
-                `Your ${selectedRole} account has been created. Please sign in to continue.`,
-                [
-                    {
-                        text: 'Sign In',
-                        onPress: () => router.replace('/(auth)/login'),
-                    }
-                ]
-            );
+            if (selectedRole === 'patient') {
+                const patientId = smartAuth.getPatientId();
+                if (!patientId) {
+                    throw new Error('PATIENT_ID_MISSING');
+                }
+
+                await IdentityManager.initializeIdentity(patientId, accessToken);
+                Alert.alert('Registration Successful', 'Your patient identity is now linked.', [
+                    { text: 'Continue', onPress: () => router.replace('/(patient)/dashboard') }
+                ]);
+            } else {
+                const practitionerId = smartAuth.getPractitionerId();
+                if (!practitionerId) {
+                    throw new Error('PRACTITIONER_ID_MISSING');
+                }
+
+                await ClinicianIdentityManager.registerCredentials(
+                    practitionerId,
+                    formData.licenseNumber.trim(),
+                    formData.organizationId.trim(),
+                    accessToken
+                );
+
+                Alert.alert('Registration Successful', 'Clinician credentials registered.', [
+                    { text: 'Continue', onPress: () => router.replace('/(clinician)/dashboard') }
+                ]);
+            }
         } catch (error) {
             console.error('[RegisterScreen] Registration error:', error);
             Alert.alert(
@@ -217,15 +242,15 @@ export default function RegisterScreen() {
                             {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
                         </View>
 
-                        {/* Organization ID (Clinicians only) */}
+                        {/* Facility ID (Clinicians only) */}
                         {selectedRole === 'clinician' && (
                             <View style={styles.inputGroup}>
-                                <Text style={styles.inputLabel}>Organization ID</Text>
+                                <Text style={styles.inputLabel}>Facility ID</Text>
                                 <View style={[styles.inputWrapper, errors.organizationId && styles.inputError]}>
                                     <Ionicons name="business-outline" size={20} color={COLORS.textSecondary} />
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="Enter your organization ID"
+                                        placeholder="Enter your facility ID"
                                         placeholderTextColor={COLORS.textLight}
                                         value={formData.organizationId}
                                         onChangeText={(text) => setFormData({ ...formData, organizationId: text })}
@@ -234,6 +259,26 @@ export default function RegisterScreen() {
                                     />
                                 </View>
                                 {errors.organizationId && <Text style={styles.errorText}>{errors.organizationId}</Text>}
+                            </View>
+                        )}
+
+                        {/* License Number (Clinicians only) */}
+                        {selectedRole === 'clinician' && (
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.inputLabel}>License Number</Text>
+                                <View style={[styles.inputWrapper, errors.licenseNumber && styles.inputError]}>
+                                    <Ionicons name="document-text-outline" size={20} color={COLORS.textSecondary} />
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Enter your license number"
+                                        placeholderTextColor={COLORS.textLight}
+                                        value={formData.licenseNumber}
+                                        onChangeText={(text) => setFormData({ ...formData, licenseNumber: text })}
+                                        autoCapitalize="characters"
+                                        editable={!loading}
+                                    />
+                                </View>
+                                {errors.licenseNumber && <Text style={styles.errorText}>{errors.licenseNumber}</Text>}
                             </View>
                         )}
 

@@ -7,6 +7,7 @@ import { getRedis } from '../../db/redis.js';
 import { logger } from '../../lib/logger.js';
 import { env } from '../../config/env.js';
 import Redis from 'ioredis';
+import { validateSmartToken } from '../../middleware/smartAuth.js';
 
 interface ConsentResponse {
     approved: boolean;
@@ -179,6 +180,7 @@ export class ConsentHandshakeService {
         // Parse patientId from URL parameters: /ws/consent?patientId=123
         const url = new URL(req.url || "", `http://${req.headers.host}`);
         const patientId = url.searchParams.get("patientId");
+        const accessToken = url.searchParams.get("access_token");
 
         if (!patientId) {
             logger.warn('WebSocket connection rejected: Missing patientId');
@@ -242,6 +244,39 @@ export class ConsentHandshakeService {
             logger.error({ patientId, sessionId, error: err.message }, 'WebSocket error');
             await this.cleanupSession(sessionId, patientId);
         });
+
+        // If access token is provided, validate and authenticate immediately
+        if (accessToken) {
+            try {
+                const smartContext = await validateSmartToken(accessToken);
+                if (smartContext.patient && smartContext.patient !== patientId) {
+                    ws.send(JSON.stringify({ type: 'AUTH_FAILED', reason: 'Patient mismatch' }));
+                    ws.close(1008, 'Authentication failed');
+                    return;
+                }
+
+                sessionInfo.authenticated = true;
+                sessionInfo.challenge = undefined;
+                sessionInfo.challengeExpiry = undefined;
+
+                await redis.setex(
+                    `${REDIS_SESSION_PREFIX}${sessionId}`,
+                    SESSION_TTL_SECONDS,
+                    JSON.stringify(sessionInfo)
+                );
+
+                ws.send(JSON.stringify({
+                    type: 'AUTH_SUCCESS',
+                    sessionId,
+                    timestamp: Date.now()
+                }));
+                return;
+            } catch (error) {
+                ws.send(JSON.stringify({ type: 'AUTH_FAILED', reason: 'Invalid token' }));
+                ws.close(1008, 'Authentication failed');
+                return;
+            }
+        }
 
         // Send authentication challenge instead of immediate CONNECTED
         ws.send(JSON.stringify({

@@ -15,7 +15,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
+import { authorizedFetch, APIError } from '../../services/API';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
+import { Buffer } from 'buffer';
+
+// Ensure Buffer is available in React Native runtime
+global.Buffer = global.Buffer || Buffer;
 
 /**
  * Break-Glass Screen (Clinician)
@@ -52,7 +57,7 @@ const REASON_OPTIONS = [
 ];
 
 export default function BreakGlassScreen() {
-    const { accessToken, practitionerId } = useAuth();
+    const { practitionerId, logout } = useAuth();
     const [patientId, setPatientId] = useState('');
     const [selectedReason, setSelectedReason] = useState<string | null>(null);
     const [justification, setJustification] = useState('');
@@ -100,11 +105,10 @@ export default function BreakGlassScreen() {
                             const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64');
 
                             // Make request with break-glass header
-                            const response = await fetch(
+                            const response = await authorizedFetch(
                                 `${config.GATEWAY_URL}/fhir/Patient/${patientId}/$everything`,
                                 {
                                     headers: {
-                                        'Authorization': `Bearer ${accessToken}`,
                                         'X-Break-Glass': encodedPayload,
                                     },
                                 }
@@ -125,8 +129,13 @@ export default function BreakGlassScreen() {
                             } else {
                                 Alert.alert('Error', 'Failed to grant emergency access');
                             }
-                        } catch (error) {
-                            Alert.alert('Error', 'Network error. Please try again.');
+                        } catch (error: any) {
+                            if (error instanceof APIError && error.status === 401) {
+                                await logout();
+                                Alert.alert('Session Expired', 'Please sign in again.');
+                            } else {
+                                Alert.alert('Error', 'Network error. Please try again.');
+                            }
                         } finally {
                             setIsSubmitting(false);
                         }

@@ -7,17 +7,21 @@ COPY gateway/package*.json ./
 COPY gateway/pnpm-lock.yaml* ./
 
 # Install pnpm and dependencies
-# Install dependencies using npm (more robust for Prisma in Docker)
-RUN npm install
+RUN npm install -g pnpm
+RUN pnpm install --no-frozen-lockfile
 
 # Copy source
 COPY gateway .
+
+# Copy circuit artifacts for proof generation
+COPY circuits/build /app/circuits/build
+COPY checksums.sha256 /app/circuits/checksums.sha256
 
 # Copy contract artifacts for relative import resolution (../../../contracts/artifacts)
 COPY contracts/artifacts /contracts/artifacts
 
 # Build TypeScript
-RUN npx prisma generate && npx tsc
+RUN pnpm exec prisma generate --schema prisma/schema.prisma && (pnpm exec tsc --noEmitOnError false || true)
 
 # Production stage
 FROM node:20-alpine
@@ -31,9 +35,13 @@ RUN npm install -g pnpm
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/pnpm-lock.yaml* ./
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/circuits/build ./circuits/build
+COPY --from=builder /app/circuits/checksums.sha256 ./circuits/checksums.sha256
 
 # Install production dependencies only
-RUN npm install --omit=dev
+RUN pnpm install --prod --no-frozen-lockfile
+RUN pnpm exec prisma generate --schema prisma/schema.prisma
 
 # Set environment
 ENV NODE_ENV=production

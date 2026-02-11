@@ -10,11 +10,12 @@ echo "🔧 Compiling ZK Guardian Circuits..."
 mkdir -p $BUILD_DIR
 
 for CIRCUIT in "${CIRCUITS[@]}"; do
+    CIRCUIT_BUILD_DIR="${BUILD_DIR}/${CIRCUIT}"
     echo ""
     echo "📐 Compiling $CIRCUIT.circom..."
     circom "${CIRCUIT}.circom" \
         --r1cs --wasm --sym \
-        --output $BUILD_DIR \
+        --output $CIRCUIT_BUILD_DIR \
         -l node_modules \
         -l ../node_modules/circomlib/circuits
 
@@ -22,7 +23,7 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     
     # Check constraints
     echo "📊 Constraint info:"
-    snarkjs r1cs info "$BUILD_DIR/$CIRCUIT.r1cs"
+    snarkjs r1cs info "$CIRCUIT_BUILD_DIR/$CIRCUIT.r1cs"
 done
 
 echo ""

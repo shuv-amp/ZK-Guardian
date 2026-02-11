@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -17,6 +17,7 @@ import { NullifierManager } from '../../services/NullifierManager';
 import { config } from '../../config/env';
 import * as SecureStore from 'expo-secure-store';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
+import { authorizedFetch, APIError } from '../../services/API';
 
 /**
  * Settings Screen
@@ -38,7 +39,7 @@ interface Preferences {
 }
 
 export default function SettingsScreen() {
-    const { patientId, accessToken, logout } = useAuth();
+    const { patientId, getAccessToken, logout } = useAuth();
 
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -59,17 +60,25 @@ export default function SettingsScreen() {
         fetchPreferences();
     }, []);
 
+    const accessHoursLabel = useMemo(() => {
+        const start = preferences.accessHoursStart.toString().padStart(2, '0');
+        const end = preferences.accessHoursEnd.toString().padStart(2, '0');
+        return `${start}:00 - ${end}:00`;
+    }, [preferences.accessHoursStart, preferences.accessHoursEnd]);
+
     const fetchPreferences = async () => {
         try {
-            const response = await fetch(`${config.GATEWAY_URL}/api/patient/preferences`, {
-                headers: { 'Authorization': `Bearer ${accessToken}` }
-            });
+            const response = await authorizedFetch(`${config.GATEWAY_URL}/api/patient/preferences`);
             if (response.ok) {
                 const data = await response.json();
                 setPreferences(data);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Failed to fetch preferences:', error);
+            if (error instanceof APIError && error.status === 401) {
+                await logout();
+            }
+            Alert.alert('Error', 'Unable to load settings. Please sign in again.');
         } finally {
             setIsLoading(false);
         }
@@ -85,10 +94,9 @@ export default function SettingsScreen() {
                 await SecureStore.setItemAsync('zk_guardian_biometric_enabled', String(value));
             }
 
-            const response = await fetch(`${config.GATEWAY_URL}/api/patient/preferences`, {
+            const response = await authorizedFetch(`${config.GATEWAY_URL}/api/patient/preferences`, {
                 method: 'PUT',
                 headers: {
-                    'Authorization': `Bearer ${accessToken}`,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ [key]: value })
@@ -151,6 +159,19 @@ export default function SettingsScreen() {
             </SafeAreaView>
         );
     }
+
+    const adjustAccessHour = (key: 'accessHoursStart' | 'accessHoursEnd', delta: number) => {
+        const current = preferences[key];
+        let next = (current + delta + 24) % 24;
+        const otherKey = key === 'accessHoursStart' ? 'accessHoursEnd' : 'accessHoursStart';
+        const otherValue = preferences[otherKey];
+
+        if (next === otherValue) {
+            next = (next + 1) % 24;
+        }
+
+        updatePreference(key, next);
+    };
 
     const SettingRow = ({
         icon,
@@ -218,6 +239,7 @@ export default function SettingsScreen() {
             <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
             <View style={styles.header}>
                 <Text style={styles.title}>Settings</Text>
+                {isSaving && <Text style={styles.savingText}>Saving changes...</Text>}
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -255,6 +277,72 @@ export default function SettingsScreen() {
                             subtitle="Generate new cryptographic nullifier"
                             onPress={handleResetNullifier}
                         />
+                        <View style={styles.divider} />
+                        <SettingRow
+                            icon="flash-outline"
+                            title="Allow Emergency Access"
+                            subtitle="Permit break-glass access during emergencies"
+                            value={preferences.allowEmergencyAccess}
+                            onValueChange={(val) => updatePreference('allowEmergencyAccess', val)}
+                        />
+                    </View>
+                </View>
+
+                {/* Access Control Section */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Access Control</Text>
+                    <View style={styles.card}>
+                        <SettingRow
+                            icon="time-outline"
+                            title="Restrict Access Hours"
+                            subtitle={preferences.restrictAccessHours ? `Allowed ${accessHoursLabel}` : 'Allow anytime'}
+                            value={preferences.restrictAccessHours}
+                            onValueChange={(val) => updatePreference('restrictAccessHours', val)}
+                        />
+                        {preferences.restrictAccessHours && (
+                            <View style={styles.accessHoursRow}>
+                                <View style={styles.accessHoursColumn}>
+                                    <Text style={styles.accessHoursLabel}>Start</Text>
+                                    <View style={styles.accessHoursControl}>
+                                        <TouchableOpacity
+                                            style={styles.accessHoursButton}
+                                            onPress={() => adjustAccessHour('accessHoursStart', -1)}
+                                        >
+                                            <Ionicons name="remove" size={18} color={COLORS.primary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.accessHoursValue}>
+                                            {preferences.accessHoursStart.toString().padStart(2, '0')}:00
+                                        </Text>
+                                        <TouchableOpacity
+                                            style={styles.accessHoursButton}
+                                            onPress={() => adjustAccessHour('accessHoursStart', 1)}
+                                        >
+                                            <Ionicons name="add" size={18} color={COLORS.primary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                                <View style={styles.accessHoursColumn}>
+                                    <Text style={styles.accessHoursLabel}>End</Text>
+                                    <View style={styles.accessHoursControl}>
+                                        <TouchableOpacity
+                                            style={styles.accessHoursButton}
+                                            onPress={() => adjustAccessHour('accessHoursEnd', -1)}
+                                        >
+                                            <Ionicons name="remove" size={18} color={COLORS.primary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.accessHoursValue}>
+                                            {preferences.accessHoursEnd.toString().padStart(2, '0')}:00
+                                        </Text>
+                                        <TouchableOpacity
+                                            style={styles.accessHoursButton}
+                                            onPress={() => adjustAccessHour('accessHoursEnd', 1)}
+                                        >
+                                            <Ionicons name="add" size={18} color={COLORS.primary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            </View>
+                        )}
                     </View>
                 </View>
 
@@ -346,6 +434,12 @@ const styles = StyleSheet.create({
         ...FONTS.bold,
         color: COLORS.text,
         letterSpacing: -0.5,
+    },
+    savingText: {
+        marginTop: SPACING.xs,
+        fontSize: FONTS.sizes.xs,
+        color: COLORS.textSecondary,
+        ...FONTS.medium,
     },
     scrollContent: {
         padding: SPACING.md,
@@ -439,6 +533,46 @@ const styles = StyleSheet.create({
         height: 1,
         backgroundColor: COLORS.border,
         marginLeft: 68,
+    },
+    accessHoursRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        paddingHorizontal: SPACING.md,
+        paddingBottom: SPACING.md,
+        gap: SPACING.md,
+    },
+    accessHoursColumn: {
+        flex: 1,
+        backgroundColor: COLORS.background,
+        borderRadius: RADIUS.md,
+        padding: SPACING.sm,
+    },
+    accessHoursLabel: {
+        fontSize: FONTS.sizes.xs,
+        color: COLORS.textSecondary,
+        marginBottom: SPACING.xs,
+        ...FONTS.medium,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    accessHoursControl: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    accessHoursButton: {
+        width: 32,
+        height: 32,
+        borderRadius: RADIUS.full,
+        backgroundColor: COLORS.surface,
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...SHADOWS.small,
+    },
+    accessHoursValue: {
+        fontSize: FONTS.sizes.md,
+        ...FONTS.semibold,
+        color: COLORS.text,
     },
     footer: {
         alignItems: 'center',

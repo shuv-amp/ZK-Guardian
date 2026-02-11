@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
+import { authorizedFetch, APIError } from '../../services/API';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
 
 /**
@@ -43,13 +44,87 @@ const RESOURCE_TYPES = [
 ];
 
 export default function RecordsScreen() {
-    const { accessToken, practitionerId } = useAuth();
+    const { logout, practitionerId } = useAuth();
     const [patientId, setPatientId] = useState('');
     const [selectedType, setSelectedType] = useState('Observation');
     const [resources, setResources] = useState<FHIRResource[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [zkProofHash, setZkProofHash] = useState<string | null>(null);
+    const [consentStatus, setConsentStatus] = useState<'unknown' | 'active' | 'expired' | 'none'>('unknown');
+    const [consentExpiresAt, setConsentExpiresAt] = useState<string | null>(null);
+    const [isCheckingConsent, setIsCheckingConsent] = useState(false);
+
+    React.useEffect(() => {
+        let isCancelled = false;
+
+        const fetchConsentStatus = async () => {
+            const trimmedPatientId = patientId.trim();
+            if (!trimmedPatientId) {
+                setConsentStatus('unknown');
+                setConsentExpiresAt(null);
+                return;
+            }
+
+            setIsCheckingConsent(true);
+
+            try {
+                const params = new URLSearchParams({ status: 'active', limit: '50' });
+                const response = await authorizedFetch(
+                    `${config.GATEWAY_URL}/api/patient/${trimmedPatientId}/consents?${params.toString()}`
+                );
+
+                if (!response.ok) {
+                    throw new Error('Consent lookup failed');
+                }
+
+                const data = await response.json();
+                const consents = Array.isArray(data.consents) ? data.consents : [];
+                const matchingConsent = consents.find((consent: any) => {
+                    const ref = consent?.grantedTo?.reference;
+                    return ref === practitionerId || ref === `Practitioner/${practitionerId}`;
+                });
+
+                if (!matchingConsent) {
+                    if (!isCancelled) {
+                        setConsentStatus('none');
+                        setConsentExpiresAt(null);
+                    }
+                    return;
+                }
+
+                const end = matchingConsent?.validPeriod?.end;
+                const expiresAt = end ? new Date(end) : null;
+
+                if (!isCancelled) {
+                    if (expiresAt && expiresAt.getTime() <= Date.now()) {
+                        setConsentStatus('expired');
+                    } else {
+                        setConsentStatus('active');
+                    }
+                    setConsentExpiresAt(end || null);
+                }
+            } catch (err: any) {
+                if (err instanceof APIError && err.status === 401) {
+                    await logout();
+                }
+                if (!isCancelled) {
+                    setConsentStatus('unknown');
+                    setConsentExpiresAt(null);
+                }
+            } finally {
+                if (!isCancelled) {
+                    setIsCheckingConsent(false);
+                }
+            }
+        };
+
+        fetchConsentStatus();
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [patientId, practitionerId]);
 
     const searchResources = async () => {
         if (!patientId.trim()) {
@@ -62,11 +137,8 @@ export default function RecordsScreen() {
         setZkProofHash(null);
 
         try {
-            const response = await fetch(
-                `${config.GATEWAY_URL}/fhir/${selectedType}?patient=${patientId}`,
-                {
-                    headers: { 'Authorization': `Bearer ${accessToken}` },
-                }
+            const response = await authorizedFetch(
+                `${config.GATEWAY_URL}/fhir/${selectedType}?patient=${patientId}`
             );
 
             // Capture ZK proof hash from response headers
@@ -84,8 +156,13 @@ export default function RecordsScreen() {
             } else {
                 setError('Failed to fetch resources');
             }
-        } catch (err) {
-            setError('Network error. Please check connection.');
+        } catch (err: any) {
+             if (err instanceof APIError && err.status === 401) {
+                await logout();
+                setError('Session expired. Please sign in again.');
+             } else {
+                setError('Network error. Please check connection.');
+             }
         } finally {
             setIsLoading(false);
         }
@@ -181,6 +258,43 @@ export default function RecordsScreen() {
                         )}
                     </TouchableOpacity>
                 </View>
+                {patientId.trim().length > 0 && (
+                    <View
+                        style={[
+                            styles.consentStatus,
+                            consentStatus === 'active' && styles.consentActive,
+                            consentStatus === 'expired' && styles.consentExpired,
+                            consentStatus === 'none' && styles.consentMissing
+                        ]}
+                    >
+                        <Ionicons
+                            name={
+                                isCheckingConsent
+                                    ? 'time-outline'
+                                    : consentStatus === 'active'
+                                        ? 'checkmark-circle'
+                                        : consentStatus === 'expired'
+                                            ? 'time'
+                                            : 'alert-circle'
+                            }
+                            size={16}
+                            color={
+                                consentStatus === 'active'
+                                    ? COLORS.success
+                                    : consentStatus === 'expired'
+                                        ? COLORS.warning
+                                        : COLORS.error
+                            }
+                        />
+                        <Text style={styles.consentStatusText}>
+                            {isCheckingConsent && 'Checking consent...'}
+                            {!isCheckingConsent && consentStatus === 'active' && `Consent active${consentExpiresAt ? ` (expires ${new Date(consentExpiresAt).toLocaleDateString()})` : ''}`}
+                            {!isCheckingConsent && consentStatus === 'expired' && 'Consent expired'}
+                            {!isCheckingConsent && consentStatus === 'none' && 'No active consent'}
+                            {!isCheckingConsent && consentStatus === 'unknown' && 'Consent status unavailable'}
+                        </Text>
+                    </View>
+                )}
             </View>
 
             {/* Resource Type Tabs */}
@@ -275,6 +389,35 @@ const styles = StyleSheet.create({
     searchSection: {
         padding: SPACING.md,
         backgroundColor: COLORS.surface,
+    },
+    consentStatus: {
+        marginTop: SPACING.sm,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: SPACING.xs,
+        paddingVertical: SPACING.xs,
+        paddingHorizontal: SPACING.sm,
+        borderRadius: RADIUS.sm,
+        backgroundColor: COLORS.surface,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    consentActive: {
+        backgroundColor: COLORS.successBg,
+        borderColor: COLORS.success,
+    },
+    consentExpired: {
+        backgroundColor: COLORS.warningBg,
+        borderColor: COLORS.warning,
+    },
+    consentMissing: {
+        backgroundColor: COLORS.errorBg,
+        borderColor: COLORS.error,
+    },
+    consentStatusText: {
+        fontSize: FONTS.sizes.sm,
+        color: COLORS.textSecondary,
+        fontWeight: FONTS.weights.medium,
     },
     inputRow: {
         flexDirection: 'row',

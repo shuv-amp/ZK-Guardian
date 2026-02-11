@@ -12,7 +12,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider } from '../hooks/useAuth';
-import { ConsentModal } from '../components/ConsentModal';
+import { ConsentProvider } from '../hooks/ConsentProvider';
 import { isBackendConfigured } from '../config/env';
 import { View, Text, StyleSheet } from 'react-native';
 import { COLORS, FONTS, SPACING } from '../constants/Theme';
@@ -60,58 +60,57 @@ export default function RootLayout() {
     return (
         <AuthProvider>
             <StatusBar style="dark" backgroundColor={COLORS.background} />
-            <Stack screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: COLORS.background },
-                animation: 'fade',
-            }}>
-                {/* Index route - handles auth-based redirects */}
-                <Stack.Screen
-                    name="index"
-                    options={{
-                        headerShown: false,
-                    }}
-                />
+            <ConsentProvider>
+                <Stack screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: COLORS.background },
+                    animation: 'fade',
+                }}>
+                    {/* Index route - handles auth-based redirects */}
+                    <Stack.Screen
+                        name="index"
+                        options={{
+                            headerShown: false,
+                        }}
+                    />
 
-                {/* OAuth callback route */}
-                <Stack.Screen
-                    name="auth"
-                    options={{
-                        headerShown: false,
-                        animation: 'none',
-                    }}
-                />
+                    {/* OAuth callback route */}
+                    <Stack.Screen
+                        name="auth"
+                        options={{
+                            headerShown: false,
+                            animation: 'none',
+                        }}
+                    />
 
-                {/* Auth screens */}
-                <Stack.Screen
-                    name="(auth)"
-                    options={{
-                        headerShown: false,
-                        gestureEnabled: false,
-                    }}
-                />
+                    {/* Auth screens */}
+                    <Stack.Screen
+                        name="(auth)"
+                        options={{
+                            headerShown: false,
+                            gestureEnabled: false,
+                        }}
+                    />
 
-                {/* Patient screens */}
-                <Stack.Screen
-                    name="(patient)"
-                    options={{
-                        headerShown: false,
-                        gestureEnabled: false,
-                    }}
-                />
+                    {/* Patient screens */}
+                    <Stack.Screen
+                        name="(patient)"
+                        options={{
+                            headerShown: false,
+                            gestureEnabled: false,
+                        }}
+                    />
 
-                {/* Clinician screens */}
-                <Stack.Screen
-                    name="(clinician)"
-                    options={{
-                        headerShown: false,
-                        gestureEnabled: false,
-                    }}
-                />
-            </Stack>
-
-            {/* Global consent request modal */}
-            <ConsentModal />
+                    {/* Clinician screens */}
+                    <Stack.Screen
+                        name="(clinician)"
+                        options={{
+                            headerShown: false,
+                            gestureEnabled: false,
+                        }}
+                    />
+                </Stack>
+            </ConsentProvider>
         </AuthProvider>
     );
 }

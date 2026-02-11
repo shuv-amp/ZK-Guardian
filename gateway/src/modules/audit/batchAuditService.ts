@@ -44,9 +44,9 @@ class BatchAuditService {
     private readonly PRIVATE_KEY = process.env.GATEWAY_PRIVATE_KEY;
 
     private readonly CONTRACT_ABI = [
-        'function batchRecordAuditEvents(bytes32[] calldata eventHashes, bytes[] calldata proofs) external',
-        'function recordAuditEvent(bytes32 eventHash, bytes calldata proof) external',
-        'event AuditEventRecorded(bytes32 indexed eventHash, uint256 timestamp)'
+        'function batchVerifyAndAudit(uint256[2][] calldata _pAs, uint256[2][2][] calldata _pBs, uint256[2][] calldata _pCs, uint256[7][] calldata _pubSignals) external',
+        'function verifyAndAudit(uint256[2] calldata _pA, uint256[2][2] calldata _pB, uint256[2] calldata _pC, uint256[7] calldata _pubSignals) external',
+        'event AccessAudited(bytes32 indexed accessEventHash, bytes32 indexed proofHash, uint256 blindedPatientId, uint256 blindedAccessHash, uint64 timestamp, address indexed auditor)'
     ];
 
     async initialize(): Promise<void> {
@@ -209,19 +209,14 @@ class BatchAuditService {
         }
 
         try {
-            // Prepare batch data
-            const eventHashes = proofs.map(p =>
-                ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(p.publicSignals)))
-            );
-            const proofBytes = proofs.map(p =>
-                ethers.AbiCoder.defaultAbiCoder().encode(
-                    ['uint256[2]', 'uint256[2][2]', 'uint256[2]', 'uint256[]'],
-                    [p.proofA, p.proofB, p.proofC, p.publicSignals.map(s => BigInt(s))]
-                )
-            );
+            // Prepare batch data in contract-native format
+            const proofAs = proofs.map(p => p.proofA);
+            const proofBs = proofs.map(p => p.proofB);
+            const proofCs = proofs.map(p => p.proofC);
+            const publicSignals = proofs.map(p => p.publicSignals.map(s => BigInt(s)));
 
             // Submit batch transaction
-            const tx = await this.contract.batchRecordAuditEvents(eventHashes, proofBytes);
+            const tx = await this.contract.batchVerifyAndAudit(proofAs, proofBs, proofCs, publicSignals);
             const receipt = await tx.wait();
 
             const result: BatchResult = {

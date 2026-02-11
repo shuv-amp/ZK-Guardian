@@ -3,6 +3,9 @@ import { config, isBackendConfigured } from '../config/env';
 import { NullifierManager } from './NullifierManager';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
+import * as SecureStorage from '../utils/SecureStorage';
+
+const TOKEN_KEY = 'zk_guardian_tokens';
 
 type ConsentRequest = {
     type: 'CONSENT_REQUEST';
@@ -35,8 +38,8 @@ export class ConsentHandshakeClient {
     private baseReconnectDelay = 1000; // 1 second
     private reconnectTimer: NodeJS.Timeout | null = null;
 
-    private onRequestCallback: ConsentRequestHandler | null = null;
-    private onStateChangeCallback: ((state: ConnectionState) => void) | null = null;
+    private onRequestCallbacks = new Set<ConsentRequestHandler>();
+    private onStateChangeCallbacks = new Set<(state: ConnectionState) => void>();
 
     /**
      * Connects to the Gateway.
@@ -71,33 +74,13 @@ export class ConsentHandshakeClient {
         }
 
         this.updateState('connecting');
+
         const wsUrl = `${config.WS_URL}?patientId=${encodeURIComponent(this.patientId)}`;
 
         console.log('[ConsentClient] Connecting to:', wsUrl);
 
         try {
-            this.socket = new WebSocket(wsUrl);
-
-            this.socket.onopen = () => {
-                console.log('[ConsentClient] Connected');
-                this.updateState('connected');
-                this.reconnectAttempts = 0;
-            };
-
-            this.socket.onmessage = (event) => {
-                this.handleMessage(event.data);
-            };
-
-            this.socket.onclose = (event) => {
-                console.log('[ConsentClient] Disconnected:', event.code, event.reason);
-                this.updateState('disconnected');
-                this.scheduleReconnect();
-            };
-
-            this.socket.onerror = (error) => {
-                console.error('[ConsentClient] WebSocket error:', error);
-                this.updateState('error');
-            };
+            this.attachSocket(wsUrl);
         } catch (error) {
             console.error('[ConsentClient] Failed to create WebSocket:', error);
             this.updateState('error');
@@ -105,7 +88,59 @@ export class ConsentHandshakeClient {
         }
     }
 
-    private handleMessage(data: string) {
+    private async attachSocket(baseUrl: string) {
+        const token = await this.getStoredAccessToken();
+        const wsUrl = token ? `${baseUrl}&access_token=${encodeURIComponent(token)}` : baseUrl;
+
+        this.socket = new WebSocket(wsUrl);
+
+        this.socket.onopen = () => {
+            console.log('[ConsentClient] Connected');
+            this.updateState('connected');
+            this.reconnectAttempts = 0;
+        };
+
+        this.socket.onmessage = (event) => {
+            void this.handleMessage(event.data);
+        };
+
+        this.socket.onclose = (event) => {
+            console.log('[ConsentClient] Disconnected:', event.code, event.reason);
+            this.updateState('disconnected');
+            this.scheduleReconnect();
+        };
+
+        this.socket.onerror = (error) => {
+            console.error('[ConsentClient] WebSocket error:', error);
+            this.updateState('error');
+        };
+    }
+
+    private async getStoredAccessToken(): Promise<string | null> {
+        try {
+            const stored = await SecureStorage.getItemAsync(TOKEN_KEY);
+            if (!stored) return null;
+
+            const parsed = JSON.parse(stored) as { accessToken?: string; expiresAt?: number };
+            if (!parsed.accessToken) return null;
+            if (parsed.expiresAt && parsed.expiresAt < Date.now()) return null;
+
+            return parsed.accessToken;
+        } catch (error) {
+            console.warn('[ConsentClient] Failed to read access token from storage:', error);
+            return null;
+        }
+    }
+
+    private async clearStoredAccessToken(): Promise<void> {
+        try {
+            await SecureStorage.deleteItemAsync(TOKEN_KEY);
+        } catch (error) {
+            console.warn('[ConsentClient] Failed to clear stored access token:', error);
+        }
+    }
+
+    private async handleMessage(data: string) {
         try {
             const message = JSON.parse(data);
 
@@ -129,9 +164,14 @@ export class ConsentHandshakeClient {
                     }
                     break;
 
+                case 'AUTH_FAILED':
+                    console.warn('[ConsentClient] Authentication failed:', message.reason);
+                    await this.clearStoredAccessToken();
+                    break;
+
                 case 'CONSENT_REQUEST':
                     console.log('[ConsentClient] Received consent request:', message.requestId);
-                    this.onRequestCallback?.(message);
+                    this.onRequestCallbacks.forEach(callback => callback(message));
                     break;
 
                 default:
@@ -211,7 +251,7 @@ export class ConsentHandshakeClient {
 
     private updateState(state: ConnectionState) {
         this.connectionState = state;
-        this.onStateChangeCallback?.(state);
+        this.onStateChangeCallbacks.forEach(callback => callback(state));
     }
 
     /**
@@ -305,16 +345,22 @@ export class ConsentHandshakeClient {
      * Registers a callback for incoming consent requests.
      * The UI should call this to display the consent modal.
      */
-    onConsentRequest(callback: ConsentRequestHandler) {
-        this.onRequestCallback = callback;
+    onConsentRequest(callback: ConsentRequestHandler): () => void {
+        this.onRequestCallbacks.add(callback);
+        return () => {
+            this.onRequestCallbacks.delete(callback);
+        };
     }
 
     /**
      * Registers a callback for connection state changes.
      * Useful for showing connection status indicator in UI.
      */
-    onStateChange(callback: (state: ConnectionState) => void) {
-        this.onStateChangeCallback = callback;
+    onStateChange(callback: (state: ConnectionState) => void): () => void {
+        this.onStateChangeCallbacks.add(callback);
+        return () => {
+            this.onStateChangeCallbacks.delete(callback);
+        };
     }
 
     /**

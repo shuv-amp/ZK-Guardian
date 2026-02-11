@@ -47,7 +47,7 @@ const CreateConsentSchema = z.object({
 });
 
 const RevokeConsentSchema = z.object({
-    signature: z.string().min(1).max(500),
+    signature: z.string().min(1).max(500).optional(),
     reason: z.string().max(500).optional(),
     revokeImmediately: z.boolean().default(true)
 });
@@ -55,9 +55,51 @@ const RevokeConsentSchema = z.object({
 // GET /api/patient/:patientId/consents
 
 consentsRouter.get('/', validateQuery(ListConsentsQuerySchema), async (req: Request, res: Response, next: NextFunction) => {
+    // 1. Dev-only: Synthetic Consent Injection
+    // Check for synthetic override FIRST to avoid DB errors with fake IDs
+    if (env.NODE_ENV !== 'production' && env.ENABLE_SYNTHETIC_CONSENT) {
+        const { patientId } = req.params;
+        if (patientId && patientId.toLowerCase().includes('riley')) {
+            const now = new Date();
+            const generateConsent = (idSuffix: string, practId: string, name: string) => ({
+                id: `synthetic-${patientId.replace('Patient/', '')}-${idSuffix}`,
+                status: 'active',
+                scope: 'patient-privacy',
+                grantedTo: {
+                    type: 'Practitioner',
+                    reference: practId,
+                    displayName: name
+                },
+                allowedCategories: ['http://loinc.org|55217-7'],
+                deniedCategories: [],
+                validPeriod: {
+                    start: now.toISOString(),
+                    end: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
+                },
+                createdAt: now.toISOString(),
+                revokedAt: null
+            });
+
+            return res.json({
+                consents: [
+                    generateConsent('1', 'dr-demo-456', 'Dr. Jordan Lee'),
+                    generateConsent('2', 'Practitioner/dr-demo-456', 'Dr. Jordan Lee'),
+                    generateConsent('3', 'practitioner-joden', 'Dr. Joden Lee'),
+                    generateConsent('4', 'practitioner-456', 'Dr. Demo')
+                ],
+                pagination: {
+                    total: 1,
+                    limit: 50,
+                    offset: 0,
+                    hasMore: false
+                }
+            });
+        }
+    }
+
     try {
         const { patientId } = req.params;
-        const query = req.query as unknown as z.infer<typeof ListConsentsQuerySchema>;
+        const query = (req as any).validatedQuery as z.infer<typeof ListConsentsQuerySchema>;
 
         // Security: Patient can only view their own data.
         const smartContext = req.smartContext;
@@ -120,6 +162,8 @@ consentsRouter.get('/', validateQuery(ListConsentsQuerySchema), async (req: Requ
         next(error);
     }
 });
+
+// (Synthetic endpoint merged into main handler above)
 
 // POST /api/patient/:patientId/consents
 

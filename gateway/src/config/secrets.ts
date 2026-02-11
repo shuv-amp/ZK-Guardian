@@ -61,7 +61,13 @@ class SecretsManager {
 
         // Derive encryption key from a master secret
         // In production, this should come from a hardware security module
-        const masterSecret = process.env.SECRETS_MASTER_KEY || 'zk-guardian-dev-key-change-in-prod';
+        let masterSecret = process.env.SECRETS_MASTER_KEY;
+        if (!masterSecret) {
+            if (env.NODE_ENV === 'production') {
+                throw new Error('SECRETS_MASTER_KEY is required in production');
+            }
+            masterSecret = 'zk-guardian-dev-key-change-in-prod';
+        }
         const salt = 'zk-guardian-secrets-salt';
 
         this.encryptionKey = await scryptAsync(masterSecret, salt, 32) as Buffer;

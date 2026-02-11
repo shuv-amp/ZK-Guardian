@@ -24,6 +24,7 @@ fi
 
 # Step 2: Process each circuit
 for CIRCUIT in "${CIRCUITS[@]}"; do
+    CIRCUIT_BUILD_DIR="${BUILD_DIR}/${CIRCUIT}"
     echo ""
     echo "----------------------------------------"
     echo "⚙️  Processing: $CIRCUIT"
@@ -33,43 +34,43 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "📐 Compiling..."
     circom "${CIRCUIT}.circom" \
         --r1cs --wasm --sym \
-        --output $BUILD_DIR \
+        --output $CIRCUIT_BUILD_DIR \
         -l node_modules \
         -l ../node_modules/circomlib/circuits
 
     # Generate zkey
     echo "🔑 Generating proving key..."
     npx snarkjs groth16 setup \
-        "${BUILD_DIR}/${CIRCUIT}.r1cs" \
+        "${CIRCUIT_BUILD_DIR}/${CIRCUIT}.r1cs" \
         "${BUILD_DIR}/${PTAU_FILE}" \
-        "${BUILD_DIR}/${CIRCUIT}_0000.zkey"
+        "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_0000.zkey"
 
     # Contribute
     echo "🎲 Contributing entropy..."
     npx snarkjs zkey contribute \
-        "${BUILD_DIR}/${CIRCUIT}_0000.zkey" \
-        "${BUILD_DIR}/${CIRCUIT}_0001.zkey" \
+        "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_0000.zkey" \
+        "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_0001.zkey" \
         --name="ZK Guardian Auto Setup" \
         -v -e="$(head -c 64 /dev/urandom | base64)"
 
     # Finalize
     echo "🏁 Finalizing zkey..."
     npx snarkjs zkey beacon \
-        "${BUILD_DIR}/${CIRCUIT}_0001.zkey" \
-        "${BUILD_DIR}/${CIRCUIT}_final.zkey" \
+        "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_0001.zkey" \
+        "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_final.zkey" \
         "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" 10 \
         -n="Final Beacon"
 
     # Export Verification Key
     echo "📤 Exporting verification key..."
     npx snarkjs zkey export verificationkey \
-        "${BUILD_DIR}/${CIRCUIT}_final.zkey" \
-        "${BUILD_DIR}/${CIRCUIT}_verification_key.json"
+        "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_final.zkey" \
+        "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_verification_key.json"
 
     # Export Solidity Verifier
     echo "📜 Generating Solidity verifier..."
     npx snarkjs zkey export solidityverifier \
-        "${BUILD_DIR}/${CIRCUIT}_final.zkey" \
+        "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_final.zkey" \
         "../contracts/src/${CIRCUIT}Verifier.sol"
 
     # Rename contract to avoid conflicts (Generic Groth16Verifier -> CircuitSpecificVerifier)
@@ -77,8 +78,8 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     perl -i -pe "s/contract Groth16Verifier/contract ${CIRCUIT}Verifier/g" "../contracts/src/${CIRCUIT}Verifier.sol"
 
     # Cleanup
-    rm -f "${BUILD_DIR}/${CIRCUIT}_0000.zkey"
-    rm -f "${BUILD_DIR}/${CIRCUIT}_0001.zkey"
+    rm -f "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_0000.zkey"
+    rm -f "${CIRCUIT_BUILD_DIR}/${CIRCUIT}_0001.zkey"
 done
 
 echo ""

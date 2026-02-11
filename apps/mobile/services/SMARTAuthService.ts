@@ -1,5 +1,6 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import { Platform } from 'react-native';
 import * as SecureStore from '../utils/SecureStorage';
 import { config, isBackendConfigured } from '../config/env';
 
@@ -35,6 +36,24 @@ export class SMARTAuthService {
     private discoveryDocument: AuthSession.DiscoveryDocument | null = null;
     private tokens: StoredTokens | null = null;
 
+    private async ensureDiscoveryDocument(): Promise<boolean> {
+        if (this.discoveryDocument) {
+            return true;
+        }
+
+        const smartConfig = await this.fetchSmartConfiguration();
+        if (!smartConfig) {
+            return false;
+        }
+
+        this.discoveryDocument = {
+            authorizationEndpoint: smartConfig.authorization_endpoint,
+            tokenEndpoint: smartConfig.token_endpoint,
+        };
+
+        return true;
+    }
+
     /**
      * Boot up.
      * Checks if we have valid tokens stashed away.
@@ -44,6 +63,8 @@ export class SMARTAuthService {
             const stored = await SecureStore.getItemAsync(TOKEN_KEY);
             if (stored) {
                 this.tokens = JSON.parse(stored);
+
+                await this.ensureDiscoveryDocument();
 
                 // Check if token is expired
                 if (this.tokens && this.tokens.expiresAt < Date.now()) {
@@ -70,16 +91,10 @@ export class SMARTAuthService {
         }
 
         try {
-            // Fetch SMART configuration from Gateway
-            const smartConfig = await this.fetchSmartConfiguration();
-            if (!smartConfig) {
+            const hasDiscovery = await this.ensureDiscoveryDocument();
+            if (!hasDiscovery) {
                 throw new Error('Failed to fetch SMART configuration');
             }
-
-            this.discoveryDocument = {
-                authorizationEndpoint: smartConfig.authorization_endpoint,
-                tokenEndpoint: smartConfig.token_endpoint,
-            };
 
             // Build auth request
             const redirectUri = AuthSession.makeRedirectUri({
@@ -92,6 +107,7 @@ export class SMARTAuthService {
                 scopes: [
                     'openid',
                     'fhirUser',
+                    'offline_access',
                     'patient/*.read',
                     'launch/patient',
                 ],
@@ -126,7 +142,22 @@ export class SMARTAuthService {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status} fetching ${configUrl}`);
             }
-            return response.json();
+
+            const json = await response.json();
+
+            // FIX: If running on Android Emulator, Gateway might return 'localhost'
+            // which refers to the emulator itself. We must rewrite to 10.0.2.2.
+            if (Platform.OS === 'android') {
+                const rewrite = (url: string) => url.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
+                json.authorization_endpoint = rewrite(json.authorization_endpoint);
+                json.token_endpoint = rewrite(json.token_endpoint);
+                json.introspection_endpoint = rewrite(json.introspection_endpoint);
+                json.revocation_endpoint = rewrite(json.revocation_endpoint);
+                json.jwks_uri = rewrite(json.jwks_uri);
+                console.log('[SMARTAuth] Rewrote config URLs for Android Emulator');
+            }
+
+            return json;
         } catch (error) {
             console.error('[SMARTAuth] Failed to fetch SMART config:', error);
             return null;
@@ -204,9 +235,17 @@ export class SMARTAuthService {
      * Refreshes the access token using the refresh token.
      */
     async refreshToken(): Promise<boolean> {
-        if (!this.tokens?.refreshToken || !this.discoveryDocument) {
+        if (!this.tokens?.refreshToken) {
             console.log('[SMARTAuth] No refresh token available');
             return false;
+        }
+
+        if (!this.discoveryDocument) {
+            const hasDiscovery = await this.ensureDiscoveryDocument();
+            if (!hasDiscovery) {
+                console.log('[SMARTAuth] Missing SMART discovery for refresh');
+                return false;
+            }
         }
 
         try {
@@ -221,7 +260,8 @@ export class SMARTAuthService {
             return this.storeTokens(response as unknown as TokenResponse);
         } catch (error) {
             console.error('[SMARTAuth] Token refresh failed:', error);
-            await this.logout();
+            // Do NOT auto-logout here. Fails can be network related.
+            // Let the caller verify if access token is actually expired.
             return false;
         }
     }
@@ -244,13 +284,29 @@ export class SMARTAuthService {
      */
     async getAccessToken(): Promise<string | null> {
         if (!this.tokens) {
-            return null;
+            const restored = await this.initialize();
+            if (!restored || !this.tokens) {
+                return null;
+            }
         }
 
-        // Refresh if expiring in next 5 minutes
+        // Refresh if expiring in next 5 minutes and refresh token is available
         if (this.tokens.expiresAt < Date.now() + 300000) {
-            const refreshed = await this.refreshToken();
-            if (!refreshed) {
+            if (this.tokens.refreshToken) {
+                const refreshed = await this.refreshToken();
+                if (!refreshed) {
+                    // Refresh failed. If strictly expired, we must logout.
+                    // If simply 'soon to expire', we return the current token to keep app alive.
+                    if (this.tokens.expiresAt <= Date.now()) {
+                        console.log('[SMARTAuth] Token expired and refresh failed. Logging out.');
+                        await this.logout();
+                        return null;
+                    }
+
+                    console.warn('[SMARTAuth] Refresh failed but token still valid. Continuing.');
+                }
+            } else if (this.tokens.expiresAt <= Date.now()) {
+                await this.logout();
                 return null;
             }
         }

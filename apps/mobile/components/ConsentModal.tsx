@@ -31,11 +31,11 @@ export function ConsentModal() {
         };
         
         // Register consent request handler
-        consentClient.onConsentRequest(handleRequest);
+        const unsubscribe = consentClient.onConsentRequest(handleRequest);
         
         // Cleanup: clear the handler on unmount
         return () => {
-            consentClient.onConsentRequest(null as any);
+            unsubscribe();
         };
     }, []);
 

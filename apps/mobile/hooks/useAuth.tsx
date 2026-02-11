@@ -76,25 +76,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
         };
     }, []);
 
-    // Connect WebSocket for patient users after auth is settled
-    // Using a separate effect to prevent connection during initial render
+    // Track consent connection state for patient users
+    // Connection lifecycle is managed by the ConsentProvider
     useEffect(() => {
-        // Only connect if:
-        // 1. Not loading
-        // 2. Authenticated
-        // 3. Is a patient (has patientId)
-        // 4. Not already connected
-        if (!isLoading && isAuthenticated && patientId && !wsConnectedRef.current) {
-            wsConnectedRef.current = true;
-            console.log('[Auth] Connecting WebSocket for patient:', patientId);
-            
-            // Subscribe to state changes to keep UI in sync
-            consentClient.onStateChange((state) => {
-                setConnectionState(state);
-            });
-            
-            consentClient.connect(patientId);
+        if (isLoading || !isAuthenticated || !patientId) {
+            return;
         }
+
+        const unsubscribe = consentClient.onStateChange((state) => {
+            setConnectionState(state);
+            wsConnectedRef.current = state === 'connected' || state === 'connecting';
+        });
+
+        return () => {
+            unsubscribe();
+        };
     }, [isLoading, isAuthenticated, patientId]);
 
     const login = async (): Promise<boolean> => {

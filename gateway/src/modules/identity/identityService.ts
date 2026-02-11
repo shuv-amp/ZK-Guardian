@@ -227,14 +227,14 @@ export class ClinicianIdentityService {
         });
 
         // Register belief on-chain. Critical for Break-Glass contract checks.
-        if (env.POLYGON_AMOY_RPC && env.GATEWAY_PRIVATE_KEY && process.env.CREDENTIAL_REGISTRY_ADDRESS) {
+        if (env.POLYGON_AMOY_RPC && env.GATEWAY_PRIVATE_KEY && env.CREDENTIAL_REGISTRY_ADDRESS) {
             try {
                 const provider = new ethers.JsonRpcProvider(env.POLYGON_AMOY_RPC);
                 const wallet = new ethers.Wallet(env.GATEWAY_PRIVATE_KEY, provider);
                 const credentialRegistryAbi = ['function registerCredential(bytes32 credentialHash) external'];
-                const contract = new ethers.Contract(process.env.CREDENTIAL_REGISTRY_ADDRESS, credentialRegistryAbi, wallet);
+            const contract = new ethers.Contract(env.CREDENTIAL_REGISTRY_ADDRESS, credentialRegistryAbi, wallet);
 
-                logger.info({ credentialHash, address: process.env.CREDENTIAL_REGISTRY_ADDRESS }, 'Registering credential on-chain...');
+            logger.info({ credentialHash, address: env.CREDENTIAL_REGISTRY_ADDRESS }, 'Registering credential on-chain...');
 
                 const tx = await contract.registerCredential(credentialHash);
                 await tx.wait();

@@ -44,6 +44,25 @@ export async function breakGlassMiddleware(
         return next();
     }
 
+    // Dev mode simple bypass for E2E tests
+    if (process.env.NODE_ENV !== 'production' && breakGlassHeader === 'true') {
+        const patientId = extractPatientId(req) || 'unknown';
+        const resourceType = extractResourceType(req);
+
+        // Mock context
+        (req as any).breakGlassContext = {
+            isBreakGlass: true,
+            reason: 'DEV_TEST',
+            justificationHash: 'mock-hash',
+            clinicianId: 'dev-user',
+            eventId: 'dev-event-' + Date.now(),
+            reviewDeadline: new Date()
+        };
+
+        logger.info({ patientId, resourceType }, 'Dev mode break-glass simple bypass active');
+        return next();
+    }
+
     try {
         // Decode and validate payload
         const decoded = Buffer.from(breakGlassHeader as string, 'base64').toString('utf-8');

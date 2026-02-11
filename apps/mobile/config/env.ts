@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
 /**
  * Environment configuration for ZK Guardian Mobile App.
@@ -18,13 +19,26 @@ const getExtraConfig = () => {
     };
 };
 
+const getDevGatewayBase = () => {
+    if (Constants.isDevice) {
+        return 'http://localhost:3000';
+    }
+
+    // Android emulator uses 10.0.2.2 to reach the host machine.
+    if (Platform.OS === 'android') {
+        return 'http://10.0.2.2:3000';
+    }
+
+    return 'http://localhost:3000';
+};
+
 const DEFAULTS = {
     development: {
         // Use 'localhost' for Simulator, but for Physical Devices use your LAN IP (e.g., 192.168.1.x)
         // For now, we default to localhost, but you should update this if testing on a real device.
         // Network-discovered LAN IP for reliable device connectivity
-        GATEWAY_URL: 'http://192.168.31.173:3000',
-        WS_URL: 'ws://192.168.31.173:3000/ws/consent',
+        GATEWAY_URL: getDevGatewayBase(),
+        WS_URL: getDevGatewayBase().replace('http://', 'ws://') + '/ws/consent',
         POLYGON_AMOY_RPC: 'https://rpc-amoy.polygon.technology',
         REVOCATION_REGISTRY_ADDRESS: '', // Set from deployment
     },

@@ -6,8 +6,6 @@ apiVersion: 1
 providers:
   - name: 'ZK Guardian Dashboards'
     orgId: 1
-    folder: 'ZK Guardian'
-    folderUid: 'zk-guardian'
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30

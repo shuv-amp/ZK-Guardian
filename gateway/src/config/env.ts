@@ -52,10 +52,16 @@ const envSchema = z.object({
     AUDIT_CONTRACT_ADDRESS: z.string().optional(),
     GATEWAY_PRIVATE_KEY: z.string().optional(),
     CONSENT_REVOCATION_REGISTRY_ADDRESS: z.string().optional(),
+    CREDENTIAL_REGISTRY_ADDRESS: z.string().optional(),
 
     // SMART on FHIR
     SMART_ISSUER: z.string().url().optional(),
     SMART_CLIENT_ID: z.string().optional(),
+    SMART_CLIENT_SECRET: z.string().optional(),
+    SMART_AUDIENCE: z.string().optional(),
+    SMART_PRIVATE_JWK: z.string().optional(),
+    SMART_REDIRECT_URIS: z.string().optional(),
+    ALLOW_DEV_BYPASS: z.coerce.boolean().default(false),
 
     // Logging
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -66,6 +72,12 @@ const envSchema = z.object({
     PROMETHEUS_ENABLED: z.coerce.boolean().default(true),
     BATCH_INTERVAL_MS: z.coerce.number().default(300000), // 5 minutes
     BATCH_SIZE: z.coerce.number().default(10),
+
+    // Rate limiting overrides (optional)
+    RATE_LIMIT_BREAK_GLASS_LIMIT: z.coerce.number().optional(),
+    RATE_LIMIT_BREAK_GLASS_WINDOW_SEC: z.coerce.number().optional(),
+    RATE_LIMIT_DEFAULT_LIMIT: z.coerce.number().optional(),
+    RATE_LIMIT_DEFAULT_WINDOW_SEC: z.coerce.number().optional(),
 
     // === New: Tracing & Keys ===
     JAEGER_ENDPOINT: z.string().url().optional(),
@@ -98,7 +110,18 @@ function loadEnv() {
         return envSchema.parse({});
     }
 
-    console.log('[DEBUG] Loaded Env:', JSON.stringify(parsed.data, null, 2));
+    if (process.env.NODE_ENV !== 'production') {
+        const redacted = {
+            ...parsed.data,
+            DATABASE_URL: parsed.data.DATABASE_URL ? '[redacted]' : undefined,
+            REDIS_URL: parsed.data.REDIS_URL ? '[redacted]' : undefined,
+            GATEWAY_PRIVATE_KEY: parsed.data.GATEWAY_PRIVATE_KEY ? '[redacted]' : undefined,
+            SMART_CLIENT_SECRET: parsed.data.SMART_CLIENT_SECRET ? '[redacted]' : undefined,
+            SMART_PRIVATE_JWK: parsed.data.SMART_PRIVATE_JWK ? '[redacted]' : undefined,
+        };
+
+        console.log('[DEBUG] Loaded Env:', JSON.stringify(redacted, null, 2));
+    }
     return parsed.data;
 }
 

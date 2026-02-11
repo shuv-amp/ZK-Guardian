@@ -7,8 +7,28 @@
 
 import { Router } from 'express';
 import { env } from '../config/env.js';
+import { getSmartKeys } from '../lib/smartKeys.js';
 
 export const smartConfigRouter: Router = Router();
+
+smartConfigRouter.get('/jwks.json', async (_req, res) => {
+    try {
+        const { publicJwk, kid } = await getSmartKeys();
+
+        res.json({
+            keys: [
+                {
+                    ...publicJwk,
+                    kid,
+                    use: 'sig',
+                    alg: 'RS256'
+                }
+            ]
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: 'JWKS_UNAVAILABLE', message: error.message });
+    }
+});
 
 smartConfigRouter.get('/smart-configuration', (req, res) => {
     // If SMART_ISSUER is not set, dynamically determine it from the request headers
@@ -22,7 +42,9 @@ smartConfigRouter.get('/smart-configuration', (req, res) => {
         token_endpoint: `${issuer}/oauth/token`,
         introspection_endpoint: `${issuer}/oauth/introspect`,
         revocation_endpoint: `${issuer}/oauth/revoke`,
+        jwks_uri: `${issuer}/.well-known/jwks.json`,
         token_endpoint_auth_methods_supported: [
+            'none',
             'client_secret_basic',
             'client_secret_post',
             'private_key_jwt'
