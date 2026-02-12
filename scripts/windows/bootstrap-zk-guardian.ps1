@@ -420,6 +420,100 @@ function Get-NodeMajorVersion {
     return 0
 }
 
+function Add-PathEntry {
+    param(
+        [Parameter(Mandatory = $true)][string]$PathEntry,
+        [switch]$PersistToUser
+    )
+
+    if (-not (Test-Path $PathEntry)) {
+        return
+    }
+
+    $currentParts = @($env:Path -split ";" | Where-Object { $_ -and $_.Trim().Length -gt 0 })
+    $existsInCurrent = $false
+    foreach ($part in $currentParts) {
+        if ($part.Trim().ToLowerInvariant() -eq $PathEntry.Trim().ToLowerInvariant()) {
+            $existsInCurrent = $true
+            break
+        }
+    }
+
+    if (-not $existsInCurrent) {
+        $env:Path = "$PathEntry;$env:Path"
+    }
+
+    if ($PersistToUser.IsPresent) {
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        if (-not $userPath) {
+            $userPath = ""
+        }
+        $userParts = @($userPath -split ";" | Where-Object { $_ -and $_.Trim().Length -gt 0 })
+        $existsInUser = $false
+        foreach ($part in $userParts) {
+            if ($part.Trim().ToLowerInvariant() -eq $PathEntry.Trim().ToLowerInvariant()) {
+                $existsInUser = $true
+                break
+            }
+        }
+
+        if (-not $existsInUser) {
+            if ($userPath.Length -gt 0) {
+                [Environment]::SetEnvironmentVariable("Path", "$PathEntry;$userPath", "User")
+            } else {
+                [Environment]::SetEnvironmentVariable("Path", $PathEntry, "User")
+            }
+        }
+    }
+}
+
+function Install-PortableNode20 {
+    $nodeVersion = "20.19.5"
+    $nodeFolder = "node-v$nodeVersion-win-x64"
+    $toolsRoot = Join-Path $script:StateDir "tools"
+    $nodeDir = Join-Path $toolsRoot $nodeFolder
+    $nodeExe = Join-Path $nodeDir "node.exe"
+
+    if (Test-Path $nodeExe) {
+        Write-Info "Using existing portable Node.js ($nodeVersion): $nodeDir"
+        Add-PathEntry -PathEntry $nodeDir -PersistToUser
+        return $true
+    }
+
+    Ensure-StateDir
+    if (-not (Test-Path $toolsRoot)) {
+        New-Item -Path $toolsRoot -ItemType Directory -Force | Out-Null
+    }
+
+    $zipPath = Join-Path $toolsRoot "$nodeFolder.zip"
+    $url = "https://nodejs.org/dist/v$nodeVersion/$nodeFolder.zip"
+
+    try {
+        Write-Info "Downloading portable Node.js $nodeVersion ..."
+        Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 180
+    } catch {
+        Write-WarnMsg "Portable Node.js download failed: $($_.Exception.Message)"
+        return $false
+    }
+
+    try {
+        Write-Info "Extracting portable Node.js ..."
+        Expand-Archive -Path $zipPath -DestinationPath $toolsRoot -Force
+    } catch {
+        Write-WarnMsg "Portable Node.js extraction failed: $($_.Exception.Message)"
+        return $false
+    }
+
+    if (-not (Test-Path $nodeExe)) {
+        Write-WarnMsg "Portable Node.js install incomplete: node.exe not found in $nodeDir"
+        return $false
+    }
+
+    Add-PathEntry -PathEntry $nodeDir -PersistToUser
+    Write-Info "Portable Node.js installed at $nodeDir"
+    return $true
+}
+
 function Ensure-Node20 {
     param([string]$PackageManager)
 
@@ -485,6 +579,14 @@ function Ensure-Node20 {
     }
 
     $major = Get-NodeMajorVersion
+    if (-not ($major -ge 20 -and $major -le 22)) {
+        Write-WarnMsg "Standard Node remediation did not produce Node 20/22. Trying portable Node fallback..."
+        if (Install-PortableNode20) {
+            Refresh-Path
+            $major = Get-NodeMajorVersion
+        }
+    }
+
     if (-not ($major -ge 20 -and $major -le 22)) {
         throw "Unsupported Node major version: $major. Install Node 20/22 (Node 20 preferred), reopen PowerShell, and rerun."
     }
