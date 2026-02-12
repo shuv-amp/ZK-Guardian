@@ -1045,6 +1045,10 @@ function Configure-EnvFile {
     Set-EnvValue -FilePath $envFile -Key "SMART_REDIRECT_URIS" -Value "zkguardian://auth"
     Set-EnvValue -FilePath $envFile -Key "ALLOW_DEV_BYPASS" -Value "false"
     Set-EnvValue -FilePath $envFile -Key "ENABLE_SYNTHETIC_CONSENT" -Value "true"
+    Set-EnvValue -FilePath $envFile -Key "RATE_LIMIT_DEFAULT_LIMIT" -Value "1000"
+    Set-EnvValue -FilePath $envFile -Key "RATE_LIMIT_DEFAULT_WINDOW_SEC" -Value "60"
+    Set-EnvValue -FilePath $envFile -Key "RATE_LIMIT_BREAK_GLASS_LIMIT" -Value "1000"
+    Set-EnvValue -FilePath $envFile -Key "RATE_LIMIT_BREAK_GLASS_WINDOW_SEC" -Value "60"
     Set-EnvValue -FilePath $envFile -Key "POLYGON_AMOY_RPC" -Value "http://127.0.0.1:8545"
     Set-EnvValue -FilePath $envFile -Key "GATEWAY_PRIVATE_KEY" -Value "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     Set-EnvValue -FilePath $envFile -Key "AUDIT_CONTRACT_ADDRESS" -Value $AuditAddress
