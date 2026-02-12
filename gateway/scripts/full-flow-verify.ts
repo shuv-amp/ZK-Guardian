@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
-import { execSync } from 'node:child_process';
 import WebSocket from 'ws';
+import { disconnectRedis, getRedis } from '../src/db/redis';
 
 type ApiResult = {
     status: number;
@@ -208,13 +208,15 @@ const ensurePatientResource = async (patientId: string): Promise<boolean> => {
     return res.ok;
 };
 
-const seedNullifier = (patientId: string): void => {
+const seedNullifier = async (patientId: string): Promise<void> => {
     const nullifier = `9${Date.now()}${Math.floor(Math.random() * 100000)}`;
-    execSync(`redis-cli setex zk:nullifier:${patientId} 3600 ${nullifier}`, { stdio: 'ignore' });
+    const redis = getRedis();
+    await redis.setex(`zk:nullifier:${patientId}`, 3600, nullifier);
 };
 
-const clearNullifier = (patientId: string): void => {
-    execSync(`redis-cli del zk:nullifier:${patientId}`, { stdio: 'ignore' });
+const clearNullifier = async (patientId: string): Promise<void> => {
+    const redis = getRedis();
+    await redis.del(`zk:nullifier:${patientId}`);
 };
 
 const createConsent = async (
@@ -301,7 +303,7 @@ const verifyPublicFhirConsistency = async (
     clinicianToken: string,
     clinicianId: string
 ): Promise<{ consentId: string }> => {
-    seedNullifier(PUBLIC_PATIENT_ID);
+    await seedNullifier(PUBLIC_PATIENT_ID);
     const patientToken = await issueToken('patient', PUBLIC_PATIENT_ID, PATIENT_SCOPE);
     const consent = await createConsent(patientToken, PUBLIC_PATIENT_ID, clinicianId, ['Observation']);
     const propagated = consent.body?.id
@@ -364,7 +366,7 @@ const verifyClinicianAndRevocation = async (
     clinicianOtherToken: string,
     existingConsentId?: string
 ): Promise<void> => {
-    seedNullifier(FLOW_PATIENT_ID);
+    await seedNullifier(FLOW_PATIENT_ID);
 
     let consentId = existingConsentId;
     if (!consentId) {
@@ -456,7 +458,7 @@ const verifyHandshakeFlow = async (
         consentId: consent.body?.id
     });
 
-    clearNullifier(HANDSHAKE_PATIENT_ID);
+    await clearNullifier(HANDSHAKE_PATIENT_ID);
 
     const ws = new WebSocket(
         `${WS_BASE_URL}/ws/consent?patientId=${encodeURIComponent(HANDSHAKE_PATIENT_ID)}&access_token=${encodeURIComponent(patientToken)}`
@@ -501,7 +503,7 @@ const verifyOffHoursAndBreakGlass = async (
     clinicianId: string,
     clinicianToken: string
 ): Promise<void> => {
-    seedNullifier(EMERGENCY_PATIENT_ID);
+    await seedNullifier(EMERGENCY_PATIENT_ID);
 
     const consent = await createConsent(patientToken, EMERGENCY_PATIENT_ID, clinicianId, ['Observation']);
     const propagated = consent.body?.id
@@ -655,52 +657,56 @@ const verifyOffHoursAndBreakGlass = async (
 };
 
 async function main(): Promise<void> {
-    const health = await fetch(`${BASE_URL}/health`);
-    const healthBody = await health.json() as any;
+    try {
+        const health = await fetch(`${BASE_URL}/health`);
+        const healthBody = await health.json() as any;
 
-    logCheck('gateway_health_ok', health.status === 200, {
-        status: health.status,
-        blockchain: healthBody?.services?.blockchain?.details,
-        fhir: healthBody?.services?.fhir?.details
-    });
+        logCheck('gateway_health_ok', health.status === 200, {
+            status: health.status,
+            blockchain: healthBody?.services?.blockchain?.details,
+            fhir: healthBody?.services?.fhir?.details
+        });
 
-    const flowPatientReady = await ensurePatientResource(FLOW_PATIENT_ID);
-    const handshakePatientReady = await ensurePatientResource(HANDSHAKE_PATIENT_ID);
-    const emergencyPatientReady = await ensurePatientResource(EMERGENCY_PATIENT_ID);
+        const flowPatientReady = await ensurePatientResource(FLOW_PATIENT_ID);
+        const handshakePatientReady = await ensurePatientResource(HANDSHAKE_PATIENT_ID);
+        const emergencyPatientReady = await ensurePatientResource(EMERGENCY_PATIENT_ID);
 
-    logCheck('flow_patient_resource_ready', flowPatientReady, { patientId: FLOW_PATIENT_ID });
-    logCheck('handshake_patient_resource_ready', handshakePatientReady, { patientId: HANDSHAKE_PATIENT_ID });
-    logCheck('emergency_patient_resource_ready', emergencyPatientReady, { patientId: EMERGENCY_PATIENT_ID });
+        logCheck('flow_patient_resource_ready', flowPatientReady, { patientId: FLOW_PATIENT_ID });
+        logCheck('handshake_patient_resource_ready', handshakePatientReady, { patientId: HANDSHAKE_PATIENT_ID });
+        logCheck('emergency_patient_resource_ready', emergencyPatientReady, { patientId: EMERGENCY_PATIENT_ID });
 
-    const clinicianPublicToken = await issueToken('clinician', PUBLIC_CLINICIAN_ID, CLINICIAN_SCOPE);
-    const clinicianFlowGrantedToken = await issueToken('clinician', FLOW_CLINICIAN_GRANTED_ID, CLINICIAN_SCOPE);
-    const clinicianFlowOtherToken = await issueToken('clinician', FLOW_CLINICIAN_OTHER_ID, CLINICIAN_SCOPE);
-    const clinicianHandshakeToken = await issueToken('clinician', HANDSHAKE_CLINICIAN_ID, CLINICIAN_SCOPE);
-    const clinicianEmergencyToken = await issueToken('clinician', EMERGENCY_CLINICIAN_ID, CLINICIAN_SCOPE);
+        const clinicianPublicToken = await issueToken('clinician', PUBLIC_CLINICIAN_ID, CLINICIAN_SCOPE);
+        const clinicianFlowGrantedToken = await issueToken('clinician', FLOW_CLINICIAN_GRANTED_ID, CLINICIAN_SCOPE);
+        const clinicianFlowOtherToken = await issueToken('clinician', FLOW_CLINICIAN_OTHER_ID, CLINICIAN_SCOPE);
+        const clinicianHandshakeToken = await issueToken('clinician', HANDSHAKE_CLINICIAN_ID, CLINICIAN_SCOPE);
+        const clinicianEmergencyToken = await issueToken('clinician', EMERGENCY_CLINICIAN_ID, CLINICIAN_SCOPE);
 
-    const flowPatientToken = await issueToken('patient', FLOW_PATIENT_ID, PATIENT_SCOPE);
-    const handshakePatientToken = await issueToken('patient', HANDSHAKE_PATIENT_ID, PATIENT_SCOPE);
-    const emergencyPatientToken = await issueToken('patient', EMERGENCY_PATIENT_ID, PATIENT_SCOPE);
+        const flowPatientToken = await issueToken('patient', FLOW_PATIENT_ID, PATIENT_SCOPE);
+        const handshakePatientToken = await issueToken('patient', HANDSHAKE_PATIENT_ID, PATIENT_SCOPE);
+        const emergencyPatientToken = await issueToken('patient', EMERGENCY_PATIENT_ID, PATIENT_SCOPE);
 
-    await verifyPublicFhirConsistency(clinicianPublicToken, PUBLIC_CLINICIAN_ID);
-    await verifyClinicianAndRevocation(
-        flowPatientToken,
-        clinicianFlowGrantedToken,
-        clinicianFlowOtherToken
-    );
-    await verifyHandshakeFlow(handshakePatientToken, HANDSHAKE_CLINICIAN_ID, clinicianHandshakeToken);
-    await verifyOffHoursAndBreakGlass(emergencyPatientToken, EMERGENCY_CLINICIAN_ID, clinicianEmergencyToken);
+        await verifyPublicFhirConsistency(clinicianPublicToken, PUBLIC_CLINICIAN_ID);
+        await verifyClinicianAndRevocation(
+            flowPatientToken,
+            clinicianFlowGrantedToken,
+            clinicianFlowOtherToken
+        );
+        await verifyHandshakeFlow(handshakePatientToken, HANDSHAKE_CLINICIAN_ID, clinicianHandshakeToken);
+        await verifyOffHoursAndBreakGlass(emergencyPatientToken, EMERGENCY_CLINICIAN_ID, clinicianEmergencyToken);
 
-    const failed = checks.filter((check) => !check.pass);
-    const summary = {
-        totalChecks: checks.length,
-        passed: checks.length - failed.length,
-        failed: failed.length
-    };
-    console.log(JSON.stringify({ summary }));
+        const failed = checks.filter((check) => !check.pass);
+        const summary = {
+            totalChecks: checks.length,
+            passed: checks.length - failed.length,
+            failed: failed.length
+        };
+        console.log(JSON.stringify({ summary }));
 
-    if (failed.length > 0) {
-        process.exit(1);
+        if (failed.length > 0) {
+            process.exit(1);
+        }
+    } finally {
+        await disconnectRedis().catch(() => undefined);
     }
 }
 
