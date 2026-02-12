@@ -46,15 +46,24 @@ const optionalUrlFromEnv = () =>
         }
     }, z.string().url().optional());
 
-const optionalNumberFromEnv = () =>
+const optionalPositiveNumberFromEnv = () =>
     z.preprocess((value) => {
         if (value === undefined || value === null) return undefined;
-        if (typeof value === 'number') return value;
+        if (typeof value === 'number') {
+            if (!Number.isFinite(value) || value <= 0) return undefined;
+            return value;
+        }
         if (typeof value === 'string') {
             const normalized = value.trim().toLowerCase();
             if (!normalized || normalized === 'undefined' || normalized === 'null' || normalized === 'none' || normalized === 'n/a') {
                 return undefined;
             }
+
+            const parsed = Number(normalized);
+            if (!Number.isFinite(parsed) || parsed <= 0) {
+                return undefined;
+            }
+            return parsed;
         }
         return value;
     }, z.coerce.number().optional());
@@ -123,10 +132,10 @@ const envSchema = z.object({
     BATCH_SIZE: z.coerce.number().default(10),
 
     // Rate limiting overrides (optional)
-    RATE_LIMIT_BREAK_GLASS_LIMIT: optionalNumberFromEnv(),
-    RATE_LIMIT_BREAK_GLASS_WINDOW_SEC: optionalNumberFromEnv(),
-    RATE_LIMIT_DEFAULT_LIMIT: optionalNumberFromEnv(),
-    RATE_LIMIT_DEFAULT_WINDOW_SEC: optionalNumberFromEnv(),
+    RATE_LIMIT_BREAK_GLASS_LIMIT: optionalPositiveNumberFromEnv(),
+    RATE_LIMIT_BREAK_GLASS_WINDOW_SEC: optionalPositiveNumberFromEnv(),
+    RATE_LIMIT_DEFAULT_LIMIT: optionalPositiveNumberFromEnv(),
+    RATE_LIMIT_DEFAULT_WINDOW_SEC: optionalPositiveNumberFromEnv(),
 
     // === New: Tracing & Keys ===
     JAEGER_ENDPOINT: optionalUrlFromEnv(),

@@ -22,20 +22,34 @@ interface RateLimitConfig {
 
 const isProduction = process.env.NODE_ENV === 'production';
 
+function sanitizePositiveInt(value: number | undefined, fallback: number): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return fallback;
+    }
+    const rounded = Math.floor(value);
+    if (rounded <= 0) {
+        return fallback;
+    }
+    return rounded;
+}
+
+const defaultLimitOverride = sanitizePositiveInt(env.RATE_LIMIT_DEFAULT_LIMIT, 100);
+const defaultWindowOverride = sanitizePositiveInt(env.RATE_LIMIT_DEFAULT_WINDOW_SEC, 60);
+const breakGlassLimitOverride = sanitizePositiveInt(env.RATE_LIMIT_BREAK_GLASS_LIMIT, isProduction ? 3 : 1000);
+const breakGlassWindowOverride = sanitizePositiveInt(env.RATE_LIMIT_BREAK_GLASS_WINDOW_SEC, isProduction ? 3600 : 60);
+
 const RATE_LIMITS: Record<string, RateLimitConfig> = {
     'fhir-read': { limit: 100, windowSeconds: 60 },
     'fhir-search': { limit: 30, windowSeconds: 60 },
     'consent': { limit: 10, windowSeconds: 60 },
     'audit': { limit: 60, windowSeconds: 60 },
     'break-glass': {
-        limit: env.RATE_LIMIT_BREAK_GLASS_LIMIT
-            ?? (isProduction ? 3 : 1000),
-        windowSeconds: env.RATE_LIMIT_BREAK_GLASS_WINDOW_SEC
-            ?? (isProduction ? 3600 : 60)
+        limit: breakGlassLimitOverride,
+        windowSeconds: breakGlassWindowOverride
     },
     'default': {
-        limit: env.RATE_LIMIT_DEFAULT_LIMIT ?? 100,
-        windowSeconds: env.RATE_LIMIT_DEFAULT_WINDOW_SEC ?? 60
+        limit: defaultLimitOverride,
+        windowSeconds: defaultWindowOverride
     }
 };
 
