@@ -760,7 +760,7 @@ function Show-LogTail {
         return
     }
 
-    Write-WarnMsg "Last $Lines lines from $Path:"
+    Write-WarnMsg "Last $Lines lines from ${Path}:"
     try {
         $tail = Get-Content -Path $Path -Tail $Lines
         foreach ($line in $tail) {
