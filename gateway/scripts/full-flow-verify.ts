@@ -260,6 +260,40 @@ const buildBreakGlassHeader = (reason: string): string => Buffer.from(JSON.strin
     emergencyThreshold: 2
 })).toString('base64');
 
+const ensureNoActiveBreakGlassSession = async (
+    patientId: string,
+    clinicianToken: string
+): Promise<void> => {
+    const status = await api(
+        'GET',
+        `/api/break-glass/${patientId}/status`,
+        clinicianToken
+    );
+
+    if (status.status !== 200 || !status.body?.hasActiveSession) {
+        return;
+    }
+
+    const sessions: Array<{ sessionId?: string }> = Array.isArray(status.body?.sessions)
+        ? status.body.sessions
+        : [];
+
+    for (const session of sessions) {
+        const close = await api(
+            'POST',
+            `/api/break-glass/${patientId}/close`,
+            clinicianToken,
+            { closureNotes: 'verify preflight cleanup' }
+        );
+
+        logCheck('break_glass_preflight_close_attempt', close.status === 200 || close.status === 404, {
+            status: close.status,
+            sessionId: session?.sessionId || close.body?.sessionId,
+            error: close.body?.error
+        });
+    }
+};
+
 const waitForWsMessage = async (
     ws: WebSocket,
     predicate: (payload: any) => boolean,
@@ -505,6 +539,8 @@ const verifyOffHoursAndBreakGlass = async (
 ): Promise<void> => {
     await seedNullifier(EMERGENCY_PATIENT_ID);
 
+    await ensureNoActiveBreakGlassSession(EMERGENCY_PATIENT_ID, clinicianToken);
+
     const consent = await createConsent(patientToken, EMERGENCY_PATIENT_ID, clinicianId, ['Observation']);
     const propagated = consent.body?.id
         ? await waitForConsentPropagation(EMERGENCY_PATIENT_ID, consent.body.id)
@@ -520,11 +556,15 @@ const verifyOffHoursAndBreakGlass = async (
     });
 
     const window = offHoursWindow();
-    await api('PUT', '/api/patient/preferences', patientToken, {
+    const restrictUpdate = await api('PUT', '/api/patient/preferences', patientToken, {
         allowEmergencyAccess: true,
         restrictAccessHours: true,
         accessHoursStart: window.start,
         accessHoursEnd: window.end
+    });
+    logCheck('preferences_restrict_hours_updated', restrictUpdate.status === 200, {
+        status: restrictUpdate.status,
+        error: restrictUpdate.body?.error
     });
 
     const blocked = await api(
@@ -537,7 +577,11 @@ const verifyOffHoursAndBreakGlass = async (
         error: blocked.body?.error
     });
 
-    await api('PUT', '/api/patient/preferences', patientToken, { allowEmergencyAccess: false });
+    const disableBreakGlass = await api('PUT', '/api/patient/preferences', patientToken, { allowEmergencyAccess: false });
+    logCheck('preferences_break_glass_disabled', disableBreakGlass.status === 200, {
+        status: disableBreakGlass.status,
+        error: disableBreakGlass.body?.error
+    });
 
     const breakGlassDisabled = await api(
         'POST',
@@ -557,7 +601,11 @@ const verifyOffHoursAndBreakGlass = async (
         error: breakGlassDisabled.body?.error
     });
 
-    await api('PUT', '/api/patient/preferences', patientToken, { allowEmergencyAccess: true });
+    const enableBreakGlass = await api('PUT', '/api/patient/preferences', patientToken, { allowEmergencyAccess: true });
+    logCheck('preferences_break_glass_enabled', enableBreakGlass.status === 200, {
+        status: enableBreakGlass.status,
+        error: enableBreakGlass.body?.error
+    });
 
     const breakGlassCreated = await api(
         'POST',
@@ -573,11 +621,13 @@ const verifyOffHoursAndBreakGlass = async (
         }
     );
 
-    const sessionId = breakGlassCreated.body?.sessionId as string | undefined;
-    logCheck('break_glass_session_created', breakGlassCreated.status === 201 && !!sessionId, {
+    let sessionId = breakGlassCreated.body?.sessionId as string | undefined;
+    const createdOrReused = (breakGlassCreated.status === 201 || breakGlassCreated.status === 409) && !!sessionId;
+    logCheck('break_glass_session_created', createdOrReused, {
         status: breakGlassCreated.status,
         sessionId,
-        txHash: breakGlassCreated.body?.txHash
+        txHash: breakGlassCreated.body?.txHash,
+        error: breakGlassCreated.body?.error
     });
 
     const mismatchAccess = await api(

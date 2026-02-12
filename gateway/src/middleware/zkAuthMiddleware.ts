@@ -578,12 +578,22 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
                 error: "BLOCKCHAIN_NOT_CONFIGURED",
                 message: "Audit blockchain is not configured. Set GATEWAY_PRIVATE_KEY, POLYGON_AMOY_RPC, and AUDIT_CONTRACT_ADDRESS."
             });
+        } else if (typeof error.message === 'string' && error.message.startsWith('BLOCKCHAIN_ERROR')) {
+            accessRequestsCounter.inc({ resource_type: resourceType, status: 'blockchain_error' });
+            return res.status(502).json({
+                error: "BLOCKCHAIN_ERROR",
+                message: env.NODE_ENV === 'production'
+                    ? 'Blockchain submission failed'
+                    : error.message
+            });
         } else {
             logger.error({ error: error.message }, 'ZK Audit failed');
             accessRequestsCounter.inc({ resource_type: resourceType, status: 'audit_failed' });
             return res.status(500).json({
                 error: "AUDIT_FAILED",
-                message: "ZK Audit Generation Failed"
+                message: env.NODE_ENV === 'production'
+                    ? "ZK Audit Generation Failed"
+                    : `ZK Audit Generation Failed: ${error.message}`
             });
         }
     }
