@@ -336,7 +336,7 @@ function Stop-ProcessOnPort {
             }
         }
     } catch {
-        Write-WarnMsg "Failed checking port $Port: $($_.Exception.Message)"
+        Write-WarnMsg "Failed checking port ${Port}: $($_.Exception.Message)"
     }
 }
 
