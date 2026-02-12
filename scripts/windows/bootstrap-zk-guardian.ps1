@@ -20,6 +20,7 @@ $script:RunState = @{
     processes = @{}
     lastRunUtc = (Get-Date).ToUniversalTime().ToString("o")
 }
+$script:PnpmCmd = "pnpm"
 
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
@@ -406,6 +407,7 @@ function Ensure-ToolchainBinary {
 function Ensure-Pnpm {
     if (Test-CommandExists "pnpm") {
         Write-Info "pnpm already available."
+        Resolve-PnpmCommand
         return
     }
 
@@ -427,15 +429,60 @@ function Ensure-Pnpm {
     if (-not (Test-CommandExists "pnpm")) {
         throw "pnpm installation failed."
     }
+
+    Resolve-PnpmCommand
+}
+
+function Resolve-PnpmCommand {
+    $script:PnpmCmd = "pnpm"
+
+    if (-not (Test-CommandExists "pnpm")) {
+        if (Test-CommandExists "corepack") {
+            $script:PnpmCmd = "corepack pnpm"
+        } else {
+            throw "pnpm is not available and corepack is missing."
+        }
+    } else {
+        try {
+            $pnpmInfo = (& pnpm --version 2>&1 | Out-String)
+            if ($pnpmInfo -match "bundled Node\.js v(\d+)") {
+                $bundledNodeMajor = [int]$Matches[1]
+                if ($bundledNodeMajor -lt 20 -or $bundledNodeMajor -gt 22) {
+                    if (Test-CommandExists "corepack") {
+                        Write-WarnMsg "Detected pnpm binary bundled with Node $bundledNodeMajor. Switching to corepack-managed pnpm for Hardhat compatibility."
+                        $script:PnpmCmd = "corepack pnpm"
+                    } else {
+                        Write-WarnMsg "pnpm is bundled with unsupported Node $bundledNodeMajor and corepack is unavailable."
+                    }
+                }
+            }
+        } catch {
+            # keep default pnpm command
+        }
+    }
+
+    try {
+        Invoke-CmdChecked -Command "$($script:PnpmCmd) --version"
+    } catch {
+        throw "Unable to execute pnpm command '$($script:PnpmCmd)': $($_.Exception.Message)"
+    }
+}
+
+function Get-PnpmCommand {
+    if (-not $script:PnpmCmd -or $script:PnpmCmd.Trim().Length -eq 0) {
+        Resolve-PnpmCommand
+    }
+    return $script:PnpmCmd
 }
 
 function Enable-PnpmBuildScripts {
     param([Parameter(Mandatory = $true)][string]$Workspace)
 
+    $pnpmCmd = Get-PnpmCommand
     Write-Info "Configuring pnpm build-script policy for bootstrap compatibility..."
     try {
-        Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm config set --location project dangerouslyAllowAllBuilds true"
-        $configValue = (& pnpm config get --location project dangerouslyAllowAllBuilds 2>$null | Out-String).Trim().ToLowerInvariant()
+        Invoke-CmdChecked -WorkingDirectory $Workspace -Command "$pnpmCmd config set --location project dangerouslyAllowAllBuilds true"
+        $configValue = (& cmd.exe /d /c "$pnpmCmd config get --location project dangerouslyAllowAllBuilds" 2>$null | Out-String).Trim().ToLowerInvariant()
         if ($configValue -ne "true") {
             Write-WarnMsg "Could not confirm pnpm dangerouslyAllowAllBuilds=true. Dependency scripts may still be blocked."
         } else {
@@ -857,9 +904,10 @@ function Start-HardhatNode {
         [Parameter(Mandatory = $true)][string]$LogPath
     )
 
+    $pnpmCmd = Get-PnpmCommand
     Ensure-HardhatPrivateKeyEnv
     Write-Info "Validating Hardhat CLI availability..."
-    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm --filter contracts exec hardhat --version"
+    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "$pnpmCmd --filter contracts exec hardhat --version"
 
     Stop-ProcessOnPort -Port 8545
 
@@ -867,13 +915,13 @@ function Start-HardhatNode {
         if ($attempt -gt 1) {
             Write-WarnMsg "Retrying Hardhat startup (attempt $attempt/2) after dependency rebuild..."
             try {
-                Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm rebuild --recursive"
+                Invoke-CmdChecked -WorkingDirectory $Workspace -Command "$pnpmCmd rebuild --recursive"
             } catch {
                 Write-WarnMsg "pnpm rebuild failed during retry: $($_.Exception.Message)"
             }
         }
 
-        Start-LoggedBackground -Name "hardhat" -WorkingDirectory $Workspace -Command "pnpm --filter contracts exec hardhat node --hostname 127.0.0.1 --port 8545" -LogPath $LogPath | Out-Null
+        Start-LoggedBackground -Name "hardhat" -WorkingDirectory $Workspace -Command "$pnpmCmd --filter contracts exec hardhat node --hostname 127.0.0.1 --port 8545" -LogPath $LogPath | Out-Null
 
         if (Wait-ForPort -Port 8545 -TimeoutSec 120) {
             Write-Info "Hardhat chain is up."
@@ -897,6 +945,32 @@ function Start-HardhatNode {
     }
 
     throw "Hardhat local chain did not start on port 8545. See log: $LogPath"
+}
+
+function Deploy-LocalContracts {
+    param(
+        [Parameter(Mandatory = $true)][string]$Workspace,
+        [Parameter(Mandatory = $true)][string]$HardhatLog
+    )
+
+    $pnpmCmd = Get-PnpmCommand
+
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        try {
+            Invoke-CmdChecked -WorkingDirectory $Workspace -Command "$pnpmCmd --filter contracts exec hardhat run scripts/deploy-local.js --network localhost"
+            return
+        } catch {
+            Write-WarnMsg "Local contract deployment failed (attempt $attempt/2): $($_.Exception.Message)"
+            Show-LogTail -Path $HardhatLog -Lines 120
+
+            if ($attempt -ge 2) {
+                throw
+            }
+
+            Write-WarnMsg "Restarting Hardhat node and retrying local deployment..."
+            Start-HardhatNode -Workspace $Workspace -LogPath $HardhatLog
+        }
+    }
 }
 
 function Ensure-DockerRunning {
@@ -1149,7 +1223,8 @@ function Launch-MobileStack {
     }
 
     Write-Info "Starting mobile app install/build process in a dedicated PowerShell window..."
-    $mobileCommand = "Set-Location '$Workspace'; pnpm --filter mobile android"
+    $pnpmCmd = Get-PnpmCommand
+    $mobileCommand = "Set-Location '$Workspace'; $pnpmCmd --filter mobile android"
     Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $mobileCommand) | Out-Null
 }
 
@@ -1241,6 +1316,7 @@ function Install-Toolchain {
 function Start-CoreStack {
     param([string]$Workspace)
 
+    $pnpmCmd = Get-PnpmCommand
     Write-Section "Starting core services"
     $logsDir = Join-Path $Workspace "logs\windows-bootstrap"
     if (-not (Test-Path $logsDir)) {
@@ -1264,11 +1340,11 @@ function Start-CoreStack {
     Enable-PnpmBuildScripts -Workspace $Workspace
 
     Write-Info "Installing JavaScript dependencies..."
-    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm install"
+    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "$pnpmCmd install"
 
     try {
         Write-Info "Rebuilding workspace dependencies to ensure native/build artifacts are ready..."
-        Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm rebuild --recursive"
+        Invoke-CmdChecked -WorkingDirectory $Workspace -Command "$pnpmCmd rebuild --recursive"
     } catch {
         Write-WarnMsg "pnpm rebuild reported warnings: $($_.Exception.Message)"
     }
@@ -1280,7 +1356,7 @@ function Start-CoreStack {
     Start-HardhatNode -Workspace $Workspace -LogPath $hardhatLog
 
     Write-Info "Deploying local smart contracts..."
-    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm --filter contracts exec hardhat run scripts/deploy-local.js --network localhost"
+    Deploy-LocalContracts -Workspace $Workspace -HardhatLog $hardhatLog
 
     $deploymentFile = Join-Path $Workspace "contracts\local-deployment.json"
     if (-not (Test-Path $deploymentFile)) {
@@ -1291,11 +1367,11 @@ function Start-CoreStack {
     Configure-EnvFile -Workspace $Workspace -AuditAddress $deployment.audit -RevocationAddress $deployment.registry -CredentialAddress $deployment.credentialRegistry
 
     Write-Info "Preparing gateway database..."
-    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm --filter gateway exec prisma generate"
-    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm --filter gateway exec prisma migrate deploy"
+    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "$pnpmCmd --filter gateway exec prisma generate"
+    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "$pnpmCmd --filter gateway exec prisma migrate deploy"
 
     $gatewayLog = Join-Path $logsDir "gateway.log"
-    Start-LoggedBackground -Name "gateway" -WorkingDirectory $Workspace -Command "pnpm --filter gateway exec tsx src/index.ts" -LogPath $gatewayLog | Out-Null
+    Start-LoggedBackground -Name "gateway" -WorkingDirectory $Workspace -Command "$pnpmCmd --filter gateway exec tsx src/index.ts" -LogPath $gatewayLog | Out-Null
 
     if (-not (Wait-ForHttpOk -Url "http://127.0.0.1:3000/health" -TimeoutSec 120)) {
         throw "Gateway health endpoint did not become ready on http://127.0.0.1:3000/health"
@@ -1309,7 +1385,7 @@ function Start-CoreStack {
             $env:BASE_URL = "http://127.0.0.1:3000"
             Push-Location $Workspace
             try {
-                & pnpm --filter gateway verify:full-flow
+                & cmd.exe /d /c "$pnpmCmd --filter gateway verify:full-flow"
                 if ($LASTEXITCODE -ne 0) {
                     throw "Gateway full-flow verification failed."
                 }
@@ -1325,7 +1401,7 @@ function Start-CoreStack {
         }
     } else {
         Write-Info "Running gateway test suite for local FHIR mode..."
-        Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm --filter gateway test --run"
+        Invoke-CmdChecked -WorkingDirectory $Workspace -Command "$pnpmCmd --filter gateway test --run"
     }
 
     if ($FhirMode -eq "public") {
