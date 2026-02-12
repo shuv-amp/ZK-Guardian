@@ -1041,6 +1041,7 @@ function Configure-EnvFile {
     Set-EnvValue -FilePath $envFile -Key "DATABASE_URL" -Value "postgresql://postgres:postgres@localhost:5432/zkguardian"
     Set-EnvValue -FilePath $envFile -Key "REDIS_URL" -Value "redis://localhost:6379"
     Set-EnvValue -FilePath $envFile -Key "SMART_CLIENT_ID" -Value "zk-guardian-mobile"
+    Set-EnvValue -FilePath $envFile -Key "SMART_ISSUER" -Value "http://127.0.0.1:3000"
     Set-EnvValue -FilePath $envFile -Key "SMART_REDIRECT_URIS" -Value "zkguardian://auth"
     Set-EnvValue -FilePath $envFile -Key "ALLOW_DEV_BYPASS" -Value "false"
     Set-EnvValue -FilePath $envFile -Key "ENABLE_SYNTHETIC_CONSENT" -Value "true"

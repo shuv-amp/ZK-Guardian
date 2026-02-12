@@ -22,6 +22,30 @@ const booleanFromEnv = (defaultValue: boolean) =>
         return value;
     }, z.boolean().default(defaultValue));
 
+const optionalUrlFromEnv = () =>
+    z.preprocess((value) => {
+        if (value === undefined || value === null) return undefined;
+        if (typeof value !== 'string') return value;
+
+        const normalized = value.trim();
+        if (!normalized) return undefined;
+
+        const lower = normalized.toLowerCase();
+        if (lower === 'undefined' || lower === 'null' || lower === 'none' || lower === 'n/a') {
+            return undefined;
+        }
+
+        try {
+            // Validate syntax. Invalid optional URLs should not invalidate all env loading.
+            // Returning undefined here lets optional fields gracefully drop out.
+            // eslint-disable-next-line no-new
+            new URL(normalized);
+            return normalized;
+        } catch {
+            return undefined;
+        }
+    }, z.string().url().optional());
+
 const envSchema = z.object({
     // Server
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -34,7 +58,7 @@ const envSchema = z.object({
     ).default('*'),
 
     // Database
-    DATABASE_URL: z.string().url().optional().transform(url => {
+    DATABASE_URL: optionalUrlFromEnv().transform(url => {
         console.log('[Config] Raw DATABASE_URL:', url);
         if (process.env.NODE_ENV === 'development' && url) {
             console.log('[Config] Checking for auto-fix...');
@@ -48,7 +72,7 @@ const envSchema = z.object({
     }),
 
     // Redis
-    REDIS_URL: z.string().url().optional().transform(url => {
+    REDIS_URL: optionalUrlFromEnv().transform(url => {
         if (process.env.NODE_ENV === 'development' && url?.includes('//redis:')) {
             console.log('[Config] Auto-fixing Redis URL for local development: redis -> localhost');
             return url.replace('//redis:', '//localhost:');
@@ -60,14 +84,14 @@ const envSchema = z.object({
     HAPI_FHIR_URL: z.string().url().default('http://localhost:8080'),
 
     // Blockchain
-    POLYGON_AMOY_RPC: z.string().url().optional(),
+    POLYGON_AMOY_RPC: optionalUrlFromEnv(),
     AUDIT_CONTRACT_ADDRESS: z.string().optional(),
     GATEWAY_PRIVATE_KEY: z.string().optional(),
     CONSENT_REVOCATION_REGISTRY_ADDRESS: z.string().optional(),
     CREDENTIAL_REGISTRY_ADDRESS: z.string().optional(),
 
     // SMART on FHIR
-    SMART_ISSUER: z.string().url().optional(),
+    SMART_ISSUER: optionalUrlFromEnv(),
     SMART_CLIENT_ID: z.string().optional(),
     SMART_CLIENT_SECRET: z.string().optional(),
     SMART_AUDIENCE: z.string().optional(),
@@ -92,7 +116,7 @@ const envSchema = z.object({
     RATE_LIMIT_DEFAULT_WINDOW_SEC: z.coerce.number().optional(),
 
     // === New: Tracing & Keys ===
-    JAEGER_ENDPOINT: z.string().url().optional(),
+    JAEGER_ENDPOINT: optionalUrlFromEnv(),
     KEY_MASTER_PASSWORD: z.string().optional(),
 
     // Circuit integrity checksums (optional, for production verification)
