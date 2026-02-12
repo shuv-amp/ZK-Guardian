@@ -71,6 +71,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap-zk-guardian
 
 What it does:
 - Installs core tooling (Git, Node LTS, Docker Desktop, pnpm; Android Studio unless `-SkipMobile`).
+- Installer fallback order: `winget` -> `choco` -> `scoop` (manual fallback prompts if none available).
 - Uses public FHIR (`hapi.fhir.org`) by default, or local Docker FHIR with `-FhirMode local`.
 - Starts a local Hardhat chain, deploys contracts, writes addresses into `.env`.
 - Runs Prisma setup, starts gateway, and runs `verify:full-flow`.

@@ -119,35 +119,211 @@ function Invoke-CmdChecked {
     }
 }
 
-function Ensure-Winget {
-    if (-not (Test-CommandExists "winget")) {
-        throw "winget is not available. Install App Installer from Microsoft Store and rerun."
+function Ensure-Choco {
+    if (Test-CommandExists "choco") {
+        return $true
+    }
+
+    if (-not $isAdmin) {
+        Write-WarnMsg "Chocolatey install skipped (requires Administrator shell)."
+        return $false
+    }
+
+    Write-Info "Attempting to install Chocolatey..."
+    try {
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString("https://community.chocolatey.org/install.ps1"))
+        Refresh-Path
+        return (Test-CommandExists "choco")
+    } catch {
+        Write-WarnMsg "Chocolatey install failed: $($_.Exception.Message)"
+        return $false
     }
 }
 
-function Ensure-WingetPackage {
-    param(
-        [Parameter(Mandatory = $true)][string]$Id,
-        [Parameter(Mandatory = $true)][string]$DisplayName
-    )
-
-    $installed = $false
-    try {
-        $listOutput = & winget list --id $Id --exact --accept-source-agreements 2>$null | Out-String
-        if ($listOutput -match [Regex]::Escape($Id)) {
-            $installed = $true
-        }
-    } catch {
-        $installed = $false
+function Ensure-Scoop {
+    if (Test-CommandExists "scoop") {
+        return $true
     }
 
-    if ($installed) {
-        Write-Info "$DisplayName already installed."
+    Write-Info "Attempting to install Scoop..."
+    try {
+        Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+        Invoke-Expression (Invoke-RestMethod -Uri "https://get.scoop.sh")
+        Refresh-Path
+        return (Test-CommandExists "scoop")
+    } catch {
+        Write-WarnMsg "Scoop install failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Get-PackageManager {
+    if (Test-CommandExists "winget") { return "winget" }
+    if (Test-CommandExists "choco") { return "choco" }
+    if (Test-CommandExists "scoop") { return "scoop" }
+
+    Write-WarnMsg "No package manager detected (winget/choco/scoop). Attempting auto-bootstrap..."
+    if (Ensure-Choco) { return "choco" }
+    if (Ensure-Scoop) { return "scoop" }
+
+    return "none"
+}
+
+function Ensure-ScoopBucket {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    if (-not (Test-CommandExists "scoop")) {
         return
     }
 
-    Write-Info "Installing $DisplayName ($Id)..."
-    Invoke-CmdChecked -Command "winget install --id $Id --exact --accept-package-agreements --accept-source-agreements --silent"
+    $buckets = (& scoop bucket list | Out-String)
+    if ($buckets -match "(?m)^\s*$Name\s") {
+        return
+    }
+
+    Write-Info "Adding Scoop bucket: $Name"
+    Invoke-CmdChecked -Command "scoop bucket add $Name"
+}
+
+function Ensure-PackageInstalled {
+    param(
+        [Parameter(Mandatory = $true)][string]$Manager,
+        [Parameter(Mandatory = $true)][string]$Package,
+        [Parameter(Mandatory = $true)][string]$DisplayName,
+        [switch]$Exact,
+        [switch]$ScoopExtras
+    )
+
+    switch ($Manager) {
+        "winget" {
+            $installed = $false
+            try {
+                $listOutput = & winget list --id $Package --exact --accept-source-agreements 2>$null | Out-String
+                if ($listOutput -match [Regex]::Escape($Package)) {
+                    $installed = $true
+                }
+            } catch {
+                $installed = $false
+            }
+
+            if ($installed) {
+                Write-Info "$DisplayName already installed."
+                return
+            }
+
+            $exactArg = $Exact.IsPresent ? "--exact" : ""
+            Write-Info "Installing $DisplayName with winget..."
+            Invoke-CmdChecked -Command "winget install --id $Package $exactArg --accept-package-agreements --accept-source-agreements --silent"
+        }
+
+        "choco" {
+            $installed = $false
+            try {
+                $listOutput = & choco list --local-only --exact $Package 2>$null | Out-String
+                if ($listOutput -match "(?im)^\Q$Package\E\s") {
+                    $installed = $true
+                }
+            } catch {
+                $installed = $false
+            }
+
+            if ($installed) {
+                Write-Info "$DisplayName already installed."
+                return
+            }
+
+            Write-Info "Installing $DisplayName with Chocolatey..."
+            Invoke-CmdChecked -Command "choco install -y $Package --no-progress"
+        }
+
+        "scoop" {
+            if ($ScoopExtras) {
+                Ensure-ScoopBucket -Name "extras"
+            }
+
+            $installed = $false
+            try {
+                $listOutput = & scoop list 2>$null | Out-String
+                if ($listOutput -match "(?im)^\s*\Q$Package\E\s") {
+                    $installed = $true
+                }
+            } catch {
+                $installed = $false
+            }
+
+            if ($installed) {
+                Write-Info "$DisplayName already installed."
+                return
+            }
+
+            Write-Info "Installing $DisplayName with Scoop..."
+            Invoke-CmdChecked -Command "scoop install $Package"
+        }
+
+        default {
+            throw "Unsupported package manager: $Manager"
+        }
+    }
+}
+
+function Show-ManualInstallHelp {
+    param([string[]]$MissingTools)
+
+    Write-ErrMsg "Cannot auto-install required tools because winget/choco/scoop are unavailable."
+    Write-Host ""
+    Write-Host "Install these tools manually, then rerun bootstrap:" -ForegroundColor Yellow
+    foreach ($tool in $MissingTools) {
+        Write-Host " - $tool" -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Host "Suggested installers:" -ForegroundColor Yellow
+    Write-Host " - Git: https://git-scm.com/download/win"
+    Write-Host " - Node 20: https://nodejs.org/en/download"
+    Write-Host " - Docker Desktop: https://www.docker.com/products/docker-desktop/"
+    Write-Host " - Android Studio: https://developer.android.com/studio"
+    throw "Manual prerequisite installation required."
+}
+
+function Ensure-ToolchainBinary {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$CommandName,
+        [Parameter(Mandatory = $true)][string]$Manager,
+        [string]$WingetId,
+        [string]$ChocoId,
+        [string]$ScoopId,
+        [switch]$ScoopExtras
+    )
+
+    if (Test-CommandExists $CommandName) {
+        Write-Info "$Name already available."
+        return
+    }
+
+    switch ($Manager) {
+        "winget" {
+            if (-not $WingetId) { throw "No winget package id for $Name" }
+            Ensure-PackageInstalled -Manager "winget" -Package $WingetId -DisplayName $Name -Exact
+        }
+        "choco" {
+            if (-not $ChocoId) { throw "No chocolatey package id for $Name" }
+            Ensure-PackageInstalled -Manager "choco" -Package $ChocoId -DisplayName $Name
+        }
+        "scoop" {
+            if (-not $ScoopId) { throw "No scoop package id for $Name" }
+            Ensure-PackageInstalled -Manager "scoop" -Package $ScoopId -DisplayName $Name -ScoopExtras:$ScoopExtras
+        }
+        default {
+            throw "Unknown package manager: $Manager"
+        }
+    }
+
+    Refresh-Path
+    if (-not (Test-CommandExists $CommandName)) {
+        throw "$Name installation reported success, but '$CommandName' is still unavailable. Open a new shell and retry."
+    }
 }
 
 function Ensure-Pnpm {
@@ -194,24 +370,72 @@ function Get-NodeMajorVersion {
 }
 
 function Ensure-Node20 {
+    param([string]$PackageManager)
+
     $major = Get-NodeMajorVersion
-    if ($major -eq 20) {
-        Write-Info "Node.js major version is 20."
+    if ($major -ge 20 -and $major -le 22) {
+        if ($major -eq 20) {
+            Write-Info "Node.js major version is 20."
+        } else {
+            Write-WarnMsg "Node.js major version is $major. This is acceptable, but Node 20 is preferred for consistency."
+        }
         return
     }
 
-    Write-WarnMsg "Current Node.js major version is $major. ZK Guardian stack is pinned for Node 20 compatibility."
+    Write-WarnMsg "Current Node.js major version is $major. Attempting to switch/install Node 20."
+
+    if (Test-CommandExists "nvm") {
+        try {
+            Invoke-CmdChecked -Command "nvm install 20.19.5"
+            Invoke-CmdChecked -Command "nvm use 20.19.5"
+            Refresh-Path
+            $major = Get-NodeMajorVersion
+            if ($major -ge 20 -and $major -le 22) {
+                Write-Info "Node now set via nvm."
+                return
+            }
+        } catch {
+            Write-WarnMsg "nvm path failed: $($_.Exception.Message)"
+        }
+    }
 
     try {
-        Ensure-WingetPackage -Id "OpenJS.NodeJS.20" -DisplayName "Node.js 20"
+        switch ($PackageManager) {
+            "winget" {
+                Ensure-PackageInstalled -Manager "winget" -Package "OpenJS.NodeJS.20" -DisplayName "Node.js 20" -Exact
+            }
+            "choco" {
+                Ensure-PackageInstalled -Manager "choco" -Package "nvm" -DisplayName "NVM for Windows"
+                Refresh-Path
+                if (Test-CommandExists "nvm") {
+                    Invoke-CmdChecked -Command "nvm install 20.19.5"
+                    Invoke-CmdChecked -Command "nvm use 20.19.5"
+                } else {
+                    Ensure-PackageInstalled -Manager "choco" -Package "nodejs-lts" -DisplayName "Node.js LTS"
+                }
+            }
+            "scoop" {
+                Ensure-PackageInstalled -Manager "scoop" -Package "nvm" -DisplayName "NVM for Windows"
+                Refresh-Path
+                if (Test-CommandExists "nvm") {
+                    Invoke-CmdChecked -Command "nvm install 20.19.5"
+                    Invoke-CmdChecked -Command "nvm use 20.19.5"
+                } else {
+                    Ensure-PackageInstalled -Manager "scoop" -Package "nodejs-lts" -DisplayName "Node.js LTS"
+                }
+            }
+            default {
+                throw "No package manager available for Node remediation."
+            }
+        }
         Refresh-Path
     } catch {
-        Write-WarnMsg "Node.js 20 winget package install failed: $($_.Exception.Message)"
+        Write-WarnMsg "Node remediation failed: $($_.Exception.Message)"
     }
 
     $major = Get-NodeMajorVersion
-    if ($major -ne 20) {
-        throw "Node.js 20 is required. Install Node 20, reopen PowerShell, and rerun."
+    if (-not ($major -ge 20 -and $major -le 22)) {
+        throw "Unsupported Node major version: $major. Install Node 20/22 (Node 20 preferred), reopen PowerShell, and rerun."
     }
 }
 
@@ -650,22 +874,61 @@ function Stop-ManagedProcesses {
 
 function Install-Toolchain {
     Write-Section "Installing toolchain"
-    Ensure-Winget
-    Ensure-WingetPackage -Id "Git.Git" -DisplayName "Git"
-    try {
-        Ensure-WingetPackage -Id "OpenJS.NodeJS.20" -DisplayName "Node.js 20"
-    } catch {
-        Write-WarnMsg "Node.js 20 package id failed. Falling back to Node.js LTS package."
-        Ensure-WingetPackage -Id "OpenJS.NodeJS.LTS" -DisplayName "Node.js LTS"
+
+    $pm = Get-PackageManager
+    Write-Info "Package manager selected: $pm"
+
+    if ($pm -eq "none") {
+        $missing = @()
+        if (-not (Test-CommandExists "git")) { $missing += "Git" }
+        if (-not (Test-CommandExists "node")) { $missing += "Node.js" }
+        if (-not (Test-CommandExists "docker")) { $missing += "Docker Desktop" }
+        if ((-not $SkipMobile) -and -not (Test-Path "$env:LOCALAPPDATA\Android\Sdk")) { $missing += "Android Studio" }
+
+        if ($missing.Count -gt 0) {
+            Show-ManualInstallHelp -MissingTools $missing
+        }
+
+        Write-WarnMsg "No package manager found, but required tools already exist. Continuing."
+        Refresh-Path
+        Ensure-Node20 -PackageManager "none"
+        Ensure-Pnpm
+        return
     }
-    Ensure-WingetPackage -Id "Docker.DockerDesktop" -DisplayName "Docker Desktop"
+
+    Ensure-ToolchainBinary -Name "Git" -CommandName "git" -Manager $pm -WingetId "Git.Git" -ChocoId "git" -ScoopId "git"
+    Ensure-ToolchainBinary -Name "Node.js" -CommandName "node" -Manager $pm -WingetId "OpenJS.NodeJS.20" -ChocoId "nodejs-lts" -ScoopId "nodejs-lts"
+    if ($pm -eq "scoop" -and -not (Test-CommandExists "docker")) {
+        Show-ManualInstallHelp -MissingTools @("Docker Desktop")
+    } else {
+        Ensure-ToolchainBinary -Name "Docker Desktop" -CommandName "docker" -Manager $pm -WingetId "Docker.DockerDesktop" -ChocoId "docker-desktop" -ScoopId "docker" -ScoopExtras
+    }
 
     if (-not $SkipMobile) {
-        Ensure-WingetPackage -Id "Google.AndroidStudio" -DisplayName "Android Studio"
+        # Android Studio has no reliable command binary to probe on PATH, so detect via common install roots.
+        $androidStudioInstalled =
+            (Test-Path "$env:ProgramFiles\Android\Android Studio\bin\studio64.exe") -or
+            (Test-Path "$env:LOCALAPPDATA\Programs\Android Studio\bin\studio64.exe")
+
+        if (-not $androidStudioInstalled) {
+            switch ($pm) {
+                "winget" {
+                    Ensure-PackageInstalled -Manager "winget" -Package "Google.AndroidStudio" -DisplayName "Android Studio" -Exact
+                }
+                "choco" {
+                    Ensure-PackageInstalled -Manager "choco" -Package "androidstudio" -DisplayName "Android Studio"
+                }
+                "scoop" {
+                    Ensure-PackageInstalled -Manager "scoop" -Package "android-studio" -DisplayName "Android Studio" -ScoopExtras
+                }
+            }
+        } else {
+            Write-Info "Android Studio already installed."
+        }
     }
 
     Refresh-Path
-    Ensure-Node20
+    Ensure-Node20 -PackageManager $pm
     Ensure-Pnpm
 }
 
