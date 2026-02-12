@@ -129,7 +129,33 @@ function Load-RunState {
 function Refresh-Path {
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $env:Path = "$machinePath;$userPath"
+
+    # Prefer user PATH entries over machine PATH so portable/user-installed tools
+    # can override globally installed versions in the current session.
+    $orderedRoots = @($userPath, $machinePath)
+    $merged = New-Object System.Collections.Generic.List[string]
+
+    foreach ($root in $orderedRoots) {
+        if (-not $root) { continue }
+        $parts = $root -split ";"
+        foreach ($part in $parts) {
+            $entry = $part.Trim()
+            if (-not $entry) { continue }
+
+            $exists = $false
+            foreach ($current in $merged) {
+                if ($current.ToLowerInvariant() -eq $entry.ToLowerInvariant()) {
+                    $exists = $true
+                    break
+                }
+            }
+            if (-not $exists) {
+                $null = $merged.Add($entry)
+            }
+        }
+    }
+
+    $env:Path = ($merged -join ";")
 }
 
 function Test-CommandExists {
@@ -585,6 +611,16 @@ function Ensure-Node20 {
             Refresh-Path
             $major = Get-NodeMajorVersion
         }
+    }
+
+    try {
+        $whereNode = & where.exe node 2>$null
+        if ($whereNode) {
+            $preview = @($whereNode | Select-Object -First 3)
+            Write-Info "Node resolution order: $($preview -join ' | ')"
+        }
+    } catch {
+        # best-effort diagnostics only
     }
 
     if (-not ($major -ge 20 -and $major -le 22)) {
