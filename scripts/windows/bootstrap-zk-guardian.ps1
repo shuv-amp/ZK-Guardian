@@ -64,12 +64,60 @@ function Save-RunState {
     Set-Content -Path $script:StateFile -Value $json -Encoding UTF8
 }
 
+function Convert-ToHashtable {
+    param([Parameter(Mandatory = $true)]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $table = @{}
+        foreach ($key in $Value.Keys) {
+            $table[$key.ToString()] = Convert-ToHashtable -Value $Value[$key]
+        }
+        return $table
+    }
+
+    if (($Value -is [System.Collections.IEnumerable]) -and -not ($Value -is [string])) {
+        $items = @()
+        foreach ($item in $Value) {
+            $items += ,(Convert-ToHashtable -Value $item)
+        }
+        return ,$items
+    }
+
+    if ($Value -is [psobject]) {
+        $table = @{}
+        foreach ($prop in $Value.PSObject.Properties) {
+            $table[$prop.Name] = Convert-ToHashtable -Value $prop.Value
+        }
+        return $table
+    }
+
+    return $Value
+}
+
 function Load-RunState {
     Ensure-StateDir
     if (Test-Path $script:StateFile) {
         try {
-            $loaded = Get-Content $script:StateFile -Raw | ConvertFrom-Json -AsHashtable
-            if ($loaded) {
+            $loadedRaw = Get-Content $script:StateFile -Raw | ConvertFrom-Json
+            if ($loadedRaw) {
+                $loaded = Convert-ToHashtable -Value $loadedRaw
+                if (-not ($loaded -is [hashtable])) {
+                    throw "State file root is not an object."
+                }
+
+                if (-not $loaded.ContainsKey("processes") -or -not ($loaded.processes -is [hashtable])) {
+                    $loaded.processes = @{}
+                }
+                if (-not $loaded.ContainsKey("workspace")) {
+                    $loaded.workspace = $null
+                }
+                if (-not $loaded.ContainsKey("lastRunUtc")) {
+                    $loaded.lastRunUtc = (Get-Date).ToUniversalTime().ToString("o")
+                }
                 $script:RunState = $loaded
             }
         } catch {
@@ -213,7 +261,10 @@ function Ensure-PackageInstalled {
                 return
             }
 
-            $exactArg = $Exact.IsPresent ? "--exact" : ""
+            $exactArg = ""
+            if ($Exact.IsPresent) {
+                $exactArg = "--exact"
+            }
             Write-Info "Installing $DisplayName with winget..."
             Invoke-CmdChecked -Command "winget install --id $Package $exactArg --accept-package-agreements --accept-source-agreements --silent"
         }
