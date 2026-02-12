@@ -446,6 +446,36 @@ function Enable-PnpmBuildScripts {
     }
 }
 
+function Normalize-HexPrivateKey {
+    param([string]$Value)
+
+    if (-not $Value) {
+        return $null
+    }
+
+    $trimmed = $Value.Trim()
+    if ($trimmed -match "^[0-9a-fA-F]{64}$") {
+        return "0x$trimmed"
+    }
+    if ($trimmed -match "^0x[0-9a-fA-F]{64}$") {
+        return $trimmed
+    }
+
+    return $null
+}
+
+function Ensure-HardhatPrivateKeyEnv {
+    $defaultDevKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    $normalized = Normalize-HexPrivateKey -Value $env:DEPLOYER_PRIVATE_KEY
+
+    if (-not $normalized) {
+        Write-WarnMsg "DEPLOYER_PRIVATE_KEY is missing/invalid. Using local development key for Hardhat startup."
+        $normalized = $defaultDevKey
+    }
+
+    $env:DEPLOYER_PRIVATE_KEY = $normalized
+}
+
 function Get-NodeMajorVersion {
     if (-not (Test-CommandExists "node")) {
         return 0
@@ -776,14 +806,14 @@ function Stop-ProcessOnPort {
     try {
         $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
         if (-not $conns) { return }
-        $pids = $conns | Select-Object -ExpandProperty OwningProcess -Unique
-        foreach ($pid in $pids) {
-            if ($pid -and $pid -ne 0) {
+        $procIds = $conns | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($procId in $procIds) {
+            if ($procId -and $procId -ne 0) {
                 try {
-                    Stop-Process -Id $pid -Force -ErrorAction Stop
-                    Write-Info "Stopped process $pid bound to port $Port."
+                    Stop-Process -Id $procId -Force -ErrorAction Stop
+                    Write-Info "Stopped process $procId bound to port $Port."
                 } catch {
-                    Write-WarnMsg "Could not stop process $pid on port $Port."
+                    Write-WarnMsg "Could not stop process $procId on port $Port."
                 }
             }
         }
@@ -827,6 +857,7 @@ function Start-HardhatNode {
         [Parameter(Mandatory = $true)][string]$LogPath
     )
 
+    Ensure-HardhatPrivateKeyEnv
     Write-Info "Validating Hardhat CLI availability..."
     Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm --filter contracts exec hardhat --version"
 
@@ -853,10 +884,10 @@ function Start-HardhatNode {
         Show-LogTail -Path $LogPath -Lines 80
 
         if ($script:RunState.processes.ContainsKey("hardhat")) {
-            $pid = [int]$script:RunState.processes["hardhat"].pid
-            if ($pid -gt 0) {
+            $procId = [int]$script:RunState.processes["hardhat"].pid
+            if ($procId -gt 0) {
                 try {
-                    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+                    Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
                 } catch {
                     # ignore cleanup failure
                 }
@@ -1128,13 +1159,13 @@ function Stop-ManagedProcesses {
     if ($script:RunState.processes) {
         foreach ($name in @("gateway", "hardhat", "emulator")) {
             if ($script:RunState.processes.ContainsKey($name)) {
-                $pid = [int]$script:RunState.processes[$name].pid
-                if ($pid -gt 0) {
+                $procId = [int]$script:RunState.processes[$name].pid
+                if ($procId -gt 0) {
                     try {
-                        Stop-Process -Id $pid -Force -ErrorAction Stop
-                        Write-Info "Stopped $name (PID $pid)."
+                        Stop-Process -Id $procId -Force -ErrorAction Stop
+                        Write-Info "Stopped $name (PID $procId)."
                     } catch {
-                        Write-WarnMsg "Could not stop $name (PID $pid). It may have already exited."
+                        Write-WarnMsg "Could not stop $name (PID $procId). It may have already exited."
                     }
                 }
             }
