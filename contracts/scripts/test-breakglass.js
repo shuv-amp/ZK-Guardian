@@ -220,8 +220,8 @@ async function main() {
         credentialPathIndices: pathIndices.map(String)
     };
 
-    const wasmPath = path.join(__dirname, "../../circuits/build/BreakGlass_js/BreakGlass.wasm");
-    const zkeyPath = path.join(__dirname, "../../circuits/build/BreakGlass_final.zkey");
+    const wasmPath = path.join(__dirname, "../../circuits/build/BreakGlass/BreakGlass_js/BreakGlass.wasm");
+    const zkeyPath = path.join(__dirname, "../../circuits/build/BreakGlass/BreakGlass_final.zkey");
 
     console.log("🔐 Proving...");
     const { proof, publicSignals } = await snarkjs.groth16.fullProve(

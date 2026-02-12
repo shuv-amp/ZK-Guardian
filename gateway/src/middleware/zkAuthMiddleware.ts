@@ -13,6 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../lib/logger.js';
 import { accessRequestsCounter, consentDenialsCounter } from '../metrics/prometheus.js';
 import { webhookService } from '../modules/notification/webhookService.js';
+import { checkAccessRestrictions } from '../routes/patientPreferences.js';
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || 'http://localhost:8080/fhir';
 
@@ -28,6 +29,77 @@ const ZK_GUARDIAN_AUDIT_ABI = [
     'event AccessAudited(bytes32 indexed accessEventHash, bytes32 indexed proofHash, uint256 blindedPatientId, uint256 blindedAccessHash, uint64 timestamp, address indexed auditor)'
 ];
 
+// AccessIsAllowedSecure public signals layout expected by on-chain verifier:
+// [0]=isValid, [1]=blindedPatientId, [2]=blindedAccessHash, [3]=nullifierHash,
+// [4]=proofOfPolicyMatch, [5]=currentTimestamp, [6]=accessEventHash.
+const ACCESS_EVENT_SIGNAL_INDEX = 6;
+const LEGACY_ACCESS_EVENT_SIGNAL_INDEX = 2;
+
+const extractAccessEventHash = (publicSignals: string[] | undefined): string => {
+    if (!publicSignals || publicSignals.length === 0) return '';
+
+    const candidate = publicSignals[ACCESS_EVENT_SIGNAL_INDEX];
+    if (candidate) {
+        const normalized = String(candidate);
+        const looksLikeFieldHash =
+            (normalized.startsWith('0x') && normalized.length > 18) ||
+            (!normalized.startsWith('0x') && normalized.length > 10);
+        if (looksLikeFieldHash) {
+            return normalized;
+        }
+    }
+
+    // Backward compatibility for old mocked signal ordering.
+    return publicSignals[LEGACY_ACCESS_EVENT_SIGNAL_INDEX] || '';
+};
+
+// Derive a request-scoped nullifier from the cached patient secret and session nonce.
+// This keeps the nullifier unique per access while remaining deterministically tied
+// to the patient/session context.
+const deriveScopedNullifier = (baseNullifier: string, sessionNonce: string): string => {
+    const digest = crypto
+        .createHash('sha256')
+        .update(`${baseNullifier}:${sessionNonce}`)
+        .digest('hex')
+        .slice(0, 62); // 31 bytes -> BN254 field-safe
+    return BigInt(`0x${digest}`).toString();
+};
+
+const sendTxWithNonceRetry = async (
+    send: (overrides?: Record<string, any>) => Promise<any>,
+    provider: ethers.JsonRpcProvider,
+    signerAddress: string,
+    initialOverrides?: Record<string, any>
+): Promise<any> => {
+    let overrides: Record<string, any> | undefined = initialOverrides ? { ...initialOverrides } : undefined;
+    let lastError: any;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            return await send(overrides);
+        } catch (error: any) {
+            lastError = error;
+            const message = String(error?.message || '');
+            if (!/nonce has already been used|nonce too low|NONCE_EXPIRED/i.test(message)) {
+                throw error;
+            }
+
+            const currentNonce = overrides?.nonce;
+            if (typeof currentNonce === 'number') {
+                overrides = { ...(overrides || {}), nonce: currentNonce + 1 };
+            } else {
+                const pendingNonceHex = await provider.send('eth_getTransactionCount', [signerAddress, 'pending']) as string;
+                const pendingNonce = Number(BigInt(pendingNonceHex));
+                overrides = { ...(overrides || {}), nonce: pendingNonce };
+            }
+
+            logger.warn({ attempt: attempt + 1, nonce: overrides?.nonce, error: message }, 'Retrying blockchain submission with refreshed nonce');
+        }
+    }
+
+    throw lastError;
+};
+
 /**
  * Submits ZK proof to blockchain.
  * Uses real tx in prod, mocks it in dev to save cash.
@@ -36,15 +108,20 @@ const submitToBlockchain = async (proofResult: any): Promise<{ txHash: string; b
     const privateKey = env.GATEWAY_PRIVATE_KEY;
     const rpcUrl = env.POLYGON_AMOY_RPC;
     const auditAddress = env.AUDIT_CONTRACT_ADDRESS;
+    const canUseDevMock = env.NODE_ENV !== 'production' && env.ALLOW_DEV_BYPASS;
 
-    // Development fallback - mock if not configured
+    // Development fallback must be explicit.
+    // If bypass is disabled, missing blockchain config is a hard error.
     if (!privateKey || !rpcUrl || !auditAddress) {
-        logger.warn({ auditAddress }, 'Blockchain not fully configured - using mock submission (dev mode)');
-        await new Promise(resolve => setTimeout(resolve, 50));
-        return {
-            txHash: "0xMOCK_" + crypto.randomBytes(30).toString('hex'),
-            blockNumber: 0
-        };
+        if (canUseDevMock) {
+            logger.warn({ auditAddress }, 'Blockchain not fully configured - using mock submission (ALLOW_DEV_BYPASS=true)');
+            await new Promise(resolve => setTimeout(resolve, 50));
+            return {
+                txHash: "0xMOCK_" + crypto.randomBytes(30).toString('hex'),
+                blockNumber: 0
+            };
+        }
+        throw new Error("BLOCKCHAIN_NOT_CONFIGURED");
     }
 
     try {
@@ -61,7 +138,25 @@ const submitToBlockchain = async (proofResult: any): Promise<{ txHash: string; b
 
         logger.info({ contract: auditAddress }, 'Submitting verifyAndAudit to blockchain');
 
-        const tx = await contract.verifyAndAudit(pA, pB, pC, publicSignals, { gasLimit: 500000 });
+        const verifyAndAuditFn: any = contract.verifyAndAudit;
+        let tx;
+        if (typeof verifyAndAuditFn?.estimateGas === 'function') {
+            const estimatedGas = await verifyAndAuditFn.estimateGas(pA, pB, pC, publicSignals);
+            const gasLimit = (estimatedGas * 120n) / 100n; // 20% execution headroom
+            tx = await sendTxWithNonceRetry(
+                (overrides?: Record<string, any>) =>
+                    verifyAndAuditFn(pA, pB, pC, publicSignals, { gasLimit, ...(overrides || {}) }),
+                provider,
+                wallet.address
+            );
+        } else {
+            // Compatibility path for mocked contracts in tests.
+            tx = await sendTxWithNonceRetry(
+                (overrides?: Record<string, any>) => verifyAndAuditFn(pA, pB, pC, publicSignals, overrides || {}),
+                provider,
+                wallet.address
+            );
+        }
         const receipt = await tx.wait();
 
         logger.info({
@@ -75,6 +170,13 @@ const submitToBlockchain = async (proofResult: any): Promise<{ txHash: string; b
             blockNumber: receipt.blockNumber
         };
     } catch (error: any) {
+        if (canUseDevMock && /insufficient funds/i.test(String(error.message || ''))) {
+            logger.warn({ error: error.message }, 'Low blockchain balance in dev - using mock submission fallback');
+            return {
+                txHash: "mock-low-funds-" + crypto.randomBytes(8).toString('hex'),
+                blockNumber: 0
+            };
+        }
         logger.error({ error: error.message }, 'Blockchain submission failed');
         throw new Error(`BLOCKCHAIN_ERROR: ${error.message}`);
     }
@@ -174,6 +276,23 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
         return res.status(401).json({ error: "Missing SMART context for clinical access audit" });
     }
 
+    // Enforce patient-configured access-hour restrictions for clinician access.
+    // Break-glass requests intentionally bypass this check via breakGlassContext.
+    if (smartContext.practitioner && !(req as any).breakGlassContext) {
+        const restriction = await checkAccessRestrictions(patientId);
+        if (!restriction.allowed) {
+            logger.warn({
+                patientId,
+                clinicianId: smartContext.practitioner,
+                reason: restriction.reason
+            }, 'Access denied by patient preference restrictions');
+            return res.status(403).json({
+                error: 'ACCESS_RESTRICTED_BY_PATIENT_PREFERENCES',
+                message: restriction.reason || 'Access currently restricted by patient preferences'
+            });
+        }
+    }
+
     if ((req as any).breakGlassContext) {
         logger.warn({ patientId, resourceType }, 'Break-glass context present, bypassing consent audit');
         return next();
@@ -199,13 +318,9 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
     const nullifierKey = `zk:nullifier:${patientId}`; // Fix: Use resolved patientId, not context patient (which is undefined for practitioners)
     let patientNullifier = await redis.get(nullifierKey);
 
-    console.log(`[ZK DEBUG] patientId=${patientId}`);
-    console.log(`[ZK DEBUG] nullifierKey=${nullifierKey}`);
-    console.log(`[ZK DEBUG] patientNullifier=${patientNullifier ? 'FOUND' : 'NULL'}`);
-
     // Debug Fallback for Verification
-    if (!patientNullifier && (patientId === 'patient-riley' || env.NODE_ENV === 'development')) {
-        console.warn('[ZK DEBUG] Redis lookup failed, using forced fallback for patient-riley/dev');
+    if (!patientNullifier && env.ALLOW_DEV_BYPASS) {
+        logger.warn({ patientId }, 'Redis nullifier missing, using dev fallback (ALLOW_DEV_BYPASS=true)');
         patientNullifier = '123456789012345678901234567890';
     }
 
@@ -217,13 +332,17 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
         sessionNonce = BigInt("0x" + crypto.randomBytes(31).toString("hex")).toString();
     }
 
+    const scopedPatientNullifier = patientNullifier && sessionNonce
+        ? deriveScopedNullifier(patientNullifier, sessionNonce)
+        : patientNullifier;
+
     // Prepare partial request (might be missing nullifier if not cached)
     const accessRequest: any = {
         patientId,
         clinicianId: smartContext.practitioner || smartContext.sub || "unknown",
         resourceId,
         resourceType,
-        patientNullifier, // might be null
+        patientNullifier: scopedPatientNullifier, // might be null
         sessionNonce
     };
 
@@ -240,7 +359,7 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
 
         // Replay check. Reject if seen before.
         const replayCheck = await replayProtection.checkAndReserve(proofResult.proofHash, {
-            accessEventHash: proofResult.publicSignals[2] || '',
+            accessEventHash: extractAccessEventHash(proofResult.publicSignals),
             patientId: request.patientId,
             clinicianId: request.clinicianId,
             resourceType: request.resourceType
@@ -285,7 +404,7 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
         req.zkAudit = {
             proofHash: proofResult.proofHash,
             txHash: txInfo.txHash,
-            accessEventHash: proofResult.publicSignals[2]
+            accessEventHash: extractAccessEventHash(proofResult.publicSignals)
         };
 
         // Record audit log + Trigger Alerts & Push Notifications
@@ -296,7 +415,7 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
             department: smartContext.department || 'Unknown',
             resourceType: request.resourceType,
             resourceId: request.resourceId,
-            accessEventHash: proofResult.publicSignals[2],
+            accessEventHash: extractAccessEventHash(proofResult.publicSignals),
             isBreakGlass: false,
             purpose: 'clinical-access'
         }).catch(err => logger.error({ err }, 'Failed to record audit log/triggers'));
@@ -373,18 +492,55 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
                     return next();
                 } else {
                     consentDenialsCounter.inc({ reason: 'user_denied' });
-                    return res.status(403).json({
-                        error: "CONSENT_DENIED",
-                        message: "Patient denied access request"
-                    });
-
                     webhookService.emit(accessRequest.patientId, 'consent.denied', {
                         patientId: accessRequest.patientId,
                         clinicianId: accessRequest.clinicianId,
                         resourceType: accessRequest.resourceType
                     }).catch(() => { });
+
+                    return res.status(403).json({
+                        error: "CONSENT_DENIED",
+                        message: "Patient denied access request"
+                    });
                 }
             } catch (handshakeError: any) {
+                if (handshakeError?.message === 'PROOF_ALREADY_USED') {
+                    return res.status(400).json({
+                        error: 'PROOF_ALREADY_USED',
+                        message: 'Replay attack detected - this proof has already been submitted'
+                    });
+                }
+                if (handshakeError?.message === 'FHIR_FETCH_FAILED') {
+                    return res.status(502).json({
+                        error: "FHIR_UNAVAILABLE",
+                        message: "Upstream FHIR Service Unavailable"
+                    });
+                }
+                if (handshakeError?.message === 'CONSENT_REVOKED') {
+                    return res.status(403).json({
+                        error: "CONSENT_REVOKED",
+                        message: "Access denied: Consent has been revoked"
+                    });
+                }
+                if (handshakeError?.message === 'CONSENT_SCOPE_MISMATCH') {
+                    return res.status(403).json({
+                        error: "INSUFFICIENT_SCOPE",
+                        message: "Access denied: Concept does not cover this resource type"
+                    });
+                }
+                if (handshakeError?.message === 'CONSENT_PRACTITIONER_MISMATCH') {
+                    return res.status(403).json({
+                        error: "CONSENT_PRACTITIONER_MISMATCH",
+                        message: "Access denied: consent does not authorize this clinician"
+                    });
+                }
+                if (handshakeError?.message === 'BLOCKCHAIN_NOT_CONFIGURED') {
+                    return res.status(503).json({
+                        error: "BLOCKCHAIN_NOT_CONFIGURED",
+                        message: "Audit blockchain is not configured. Set GATEWAY_PRIVATE_KEY, POLYGON_AMOY_RPC, and AUDIT_CONTRACT_ADDRESS."
+                    });
+                }
+
                 logger.error({ error: handshakeError.message }, 'Consent handshake failed');
                 consentDenialsCounter.inc({ reason: 'timeout_or_error' });
                 return res.status(403).json({
@@ -409,6 +565,18 @@ export const zkAuthMiddleware = async (req: Request, res: Response, next: NextFu
             return res.status(403).json({
                 error: "INSUFFICIENT_SCOPE",
                 message: "Access denied: Concept does not cover this resource type"
+            });
+        } else if (error.message === 'CONSENT_PRACTITIONER_MISMATCH') {
+            accessRequestsCounter.inc({ resource_type: resourceType, status: 'practitioner_mismatch' });
+            return res.status(403).json({
+                error: "CONSENT_PRACTITIONER_MISMATCH",
+                message: "Access denied: consent does not authorize this clinician"
+            });
+        } else if (error.message === 'BLOCKCHAIN_NOT_CONFIGURED') {
+            accessRequestsCounter.inc({ resource_type: resourceType, status: 'blockchain_not_configured' });
+            return res.status(503).json({
+                error: "BLOCKCHAIN_NOT_CONFIGURED",
+                message: "Audit blockchain is not configured. Set GATEWAY_PRIVATE_KEY, POLYGON_AMOY_RPC, and AUDIT_CONTRACT_ADDRESS."
             });
         } else {
             logger.error({ error: error.message }, 'ZK Audit failed');

@@ -16,6 +16,7 @@ const getExtraConfig = () => {
         wsUrl: extra.WS_URL as string | undefined,
         polygonRpcUrl: extra.POLYGON_AMOY_RPC as string | undefined,
         revocationRegistryAddress: extra.CONSENT_REVOCATION_REGISTRY_ADDRESS as string | undefined,
+        enableDevDirectLogin: extra.ENABLE_DEV_DIRECT_LOGIN as string | boolean | undefined,
     };
 };
 
@@ -41,6 +42,7 @@ const DEFAULTS = {
         WS_URL: getDevGatewayBase().replace('http://', 'ws://') + '/ws/consent',
         POLYGON_AMOY_RPC: 'https://rpc-amoy.polygon.technology',
         REVOCATION_REGISTRY_ADDRESS: '', // Set from deployment
+        ENABLE_DEV_DIRECT_LOGIN: true,
     },
     production: {
         // These MUST be overridden via EAS secrets or app.config.js
@@ -48,7 +50,18 @@ const DEFAULTS = {
         WS_URL: '',
         POLYGON_AMOY_RPC: 'https://rpc-amoy.polygon.technology',
         REVOCATION_REGISTRY_ADDRESS: '',
+        ENABLE_DEV_DIRECT_LOGIN: false,
     }
+};
+
+const parseBoolean = (value: string | boolean | undefined, fallback: boolean): boolean => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+    return fallback;
 };
 
 export const getConfig = () => {
@@ -60,6 +73,7 @@ export const getConfig = () => {
             WS_URL: extra.wsUrl || DEFAULTS.development.WS_URL,
             polygonRpcUrl: extra.polygonRpcUrl || DEFAULTS.development.POLYGON_AMOY_RPC,
             revocationRegistryAddress: extra.revocationRegistryAddress || DEFAULTS.development.REVOCATION_REGISTRY_ADDRESS,
+            ENABLE_DEV_DIRECT_LOGIN: parseBoolean(extra.enableDevDirectLogin, DEFAULTS.development.ENABLE_DEV_DIRECT_LOGIN),
             IS_CONFIGURED: true, // Dev always works with localhost
         };
     }
@@ -73,6 +87,7 @@ export const getConfig = () => {
         WS_URL: wsUrl,
         polygonRpcUrl: extra.polygonRpcUrl || DEFAULTS.production.POLYGON_AMOY_RPC,
         revocationRegistryAddress: extra.revocationRegistryAddress || DEFAULTS.production.REVOCATION_REGISTRY_ADDRESS,
+        ENABLE_DEV_DIRECT_LOGIN: parseBoolean(extra.enableDevDirectLogin, DEFAULTS.production.ENABLE_DEV_DIRECT_LOGIN),
         IS_CONFIGURED: !!gatewayUrl && !!wsUrl,
     };
 };

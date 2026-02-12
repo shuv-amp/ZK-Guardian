@@ -11,7 +11,6 @@ import { AuthorizationError, ValidationError, ResourceNotFoundError } from '../l
 import { z } from 'zod';
 import axios from 'axios';
 import { ethers } from 'ethers';
-import { createHash } from 'crypto';
 import { prisma } from '../db/client.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
@@ -337,11 +336,45 @@ consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), asy
         let txHash: string | null = null;
         let blockNumber: number | null = null;
 
-        // Compute consent hash for on-chain revocation
-        const consentHashHex = createHash('sha256')
-            .update(consentId + patientId)
-            .digest('hex');
-        const consentHashBytes32 = '0x' + consentHashHex.slice(0, 64);
+        // Compute revocation hash in the same domain used by ZK proof verification.
+        // We hash the Consent resource payload with Poseidon so on-chain revocation
+        // actually blocks subsequent proofs for this consent.
+        let consentForHashing: any = null;
+        try {
+            const fhirConsentResponse = await axios.get(
+                `${HAPI_FHIR_URL}/Consent/${consentId}`,
+                { headers: { Accept: 'application/fhir+json' } }
+            );
+            consentForHashing = fhirConsentResponse.data;
+        } catch (fhirReadError: any) {
+            logger.warn({
+                consentId,
+                patientId,
+                error: fhirReadError?.message
+            }, 'Failed to fetch Consent from FHIR for revocation hashing, using local fallback payload');
+        }
+
+        if (!consentForHashing) {
+            consentForHashing = {
+                resourceType: 'Consent',
+                id: consentId,
+                status: 'active',
+                patient: { reference: `Patient/${patientId}` },
+                provision: {
+                    period: {
+                        start: cached.validFrom.toISOString(),
+                        end: cached.validUntil.toISOString()
+                    },
+                    class: cached.allowedCategories.map((code) => ({ code }))
+                }
+            };
+        }
+
+        const consentHash = await hashFhirConsent(consentForHashing);
+        const consentHashBytes32 = ethers.zeroPadValue(
+            ethers.toBeHex(BigInt(consentHash)),
+            32
+        );
 
         // Blockchain Revocation. Making it official.
         if (env.POLYGON_AMOY_RPC && env.GATEWAY_PRIVATE_KEY && env.CONSENT_REVOCATION_REGISTRY_ADDRESS) {

@@ -25,7 +25,7 @@ WebBrowser.maybeCompleteAuthSession();
 type UserRole = 'patient' | 'clinician';
 
 export default function LoginScreen() {
-    const { login, patientId, practitionerId } = useAuth();
+    const { login } = useAuth();
     const router = useRouter();
     const [selectedRole, setSelectedRole] = useState<UserRole>('patient');
     const [loading, setLoading] = useState(false);
@@ -35,9 +35,7 @@ export default function LoginScreen() {
         setLoading(true);
 
         try {
-            // Kick off the SMART Auth flow.
-            // This will open the browser modal.
-            const success = await login();
+            const success = await login(selectedRole);
 
             if (success) {
                 // Navigate based on SMART launch context, not the UI toggle
@@ -80,7 +78,7 @@ export default function LoginScreen() {
                 {/* Role Selection */}
                 <View style={styles.roleContainer}>
                     <Text style={styles.roleLabel}>Select your role</Text>
-                    <Text style={styles.roleNote}>Your SMART login determines the final role.</Text>
+                    <Text style={styles.roleNote}>Your selected role will be used for SMART sign-in.</Text>
 
                     <View style={styles.roleButtons}>
                         <TouchableOpacity

@@ -116,6 +116,16 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
         uint256[2] calldata _pC,
         uint256[7] calldata _pubSignals
     ) external {
+        _verifyAndAudit(_pA, _pB, _pC, _pubSignals, msg.sender);
+    }
+
+    function _verifyAndAudit(
+        uint256[2] memory _pA,
+        uint256[2][2] memory _pB,
+        uint256[2] memory _pC,
+        uint256[7] memory _pubSignals,
+        address auditor
+    ) internal {
         // 1. Compute Proof Hash
         bytes32 proofHash = keccak256(abi.encodePacked(_pA, _pB, _pC, _pubSignals));
         if (verifiedProofs[proofHash]) {
@@ -154,7 +164,7 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
             _pubSignals[1], // blindedPatientId
             _pubSignals[2], // blindedAccessHash
             uint64(block.timestamp),
-            msg.sender
+            auditor
         );
     }
 
@@ -173,7 +183,7 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
         }
 
         for (uint256 i = 0; i < len; ) {
-            this.verifyAndAudit(_pAs[i], _pBs[i], _pCs[i], _pubSignals[i]);
+            _verifyAndAudit(_pAs[i], _pBs[i], _pCs[i], _pubSignals[i], msg.sender);
             unchecked { ++i; }
         }
     }
@@ -290,4 +300,3 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
         );
     }
 }
-

@@ -277,29 +277,21 @@ export async function smartAuthMiddleware(
     const token = authHeader.slice(7);
 
     try {
-        // In development mode, allow bypass ONLY when explicitly enabled OR for synthetic "Riley" patient
-        const isRileyRequest = req.url.toLowerCase().includes('riley') || (req.query.patient as string)?.toLowerCase().includes('riley');
+        // In development mode, allow bypass ONLY when explicitly enabled.
+        // Synthetic Riley requests may use a bypass token, but revoked/invalid JWTs
+        // must not silently pass authentication.
+        const isFhirRequest = req.originalUrl.toLowerCase().startsWith('/fhir');
+        const isRileyRequest = isFhirRequest &&
+            (req.url.toLowerCase().includes('riley') || (req.query.patient as string)?.toLowerCase().includes('riley'));
+        const isSyntheticBypassToken = token === 'dev-bypass';
 
-        if (env.NODE_ENV !== 'production' && (env.ALLOW_DEV_BYPASS || (env.ENABLE_SYNTHETIC_CONSENT && isRileyRequest))) {
+        if (env.NODE_ENV !== 'production' && (env.ALLOW_DEV_BYPASS || (env.ENABLE_SYNTHETIC_CONSENT && isRileyRequest && isSyntheticBypassToken))) {
             logger.debug({ url: req.url }, 'SMART auth bypassed for synthetic/dev request');
             req.smartContext = {
                 sub: 'dev-clinician',
                 patient: 'patient-riley',
-                practitioner: 'dr-demo-456', // Ensure this matches the expected doctor ID
+                practitioner: 'dr-demo-456',
                 scope: 'patient/*.read patient/*.write user/*.read launch/patient',
-                iss: env.SMART_ISSUER || `${req.protocol}://${req.get('host')}`,
-                exp: Math.floor(Date.now() / 1000) + 3600,
-            };
-            return next();
-        }
-
-        if (env.NODE_ENV === 'development' && env.ALLOW_DEV_BYPASS) {
-            logger.warn('SMART auth bypassed in development mode (ALLOW_DEV_BYPASS=true)');
-            req.smartContext = {
-                sub: 'dev-user',
-                patient: req.query.patient as string || '123',
-                practitioner: 'practitioner-456',
-                scope: 'patient/*.read patient/*.write user/*.read',
                 iss: env.SMART_ISSUER || `${req.protocol}://${req.get('host')}`,
                 exp: Math.floor(Date.now() / 1000) + 3600,
             };
@@ -311,16 +303,23 @@ export async function smartAuthMiddleware(
 
         // Check scope for the requested resource
         const requiredScope = getRequiredScope(req);
-        if (requiredScope && !hasScope(smartContext, requiredScope)) {
+        const acceptableScopes = requiredScope
+            ? (smartContext.practitioner
+                ? [requiredScope, requiredScope.replace(/^patient\//, 'user/')]
+                : [requiredScope])
+            : [];
+        const hasRequiredScope = acceptableScopes.length === 0 || acceptableScopes.some((scope) => hasScope(smartContext, scope));
+
+        if (!hasRequiredScope) {
             logger.warn({
                 sub: smartContext.sub,
-                required: requiredScope,
+                required: acceptableScopes,
                 granted: smartContext.scope
             }, 'Insufficient scope');
 
             res.status(403).json({
                 error: 'INSUFFICIENT_SCOPE',
-                message: `Required scope: ${requiredScope}`,
+                message: `Required scope: ${acceptableScopes.join(' or ')}`,
                 granted: smartContext.scope
             });
             return;

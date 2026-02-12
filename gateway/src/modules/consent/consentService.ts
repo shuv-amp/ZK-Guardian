@@ -12,6 +12,72 @@ import { v4 as uuidv4 } from 'uuid';
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || 'http://localhost:8080/fhir';
 
+const CLINICAL_RESOURCE_TYPES = [
+    'Patient',
+    'Observation',
+    'Condition',
+    'MedicationRequest',
+    'DiagnosticReport',
+    'Encounter',
+    'Procedure',
+    'Immunization',
+    'AllergyIntolerance',
+    'CarePlan',
+    'Goal'
+] as const;
+
+const CATEGORY_ALIASES: Record<string, string[]> = {
+    labs: ['Observation'],
+    'lab-results': ['Observation'],
+    vitals: ['Observation'],
+    medications: ['MedicationRequest'],
+    meds: ['MedicationRequest'],
+    prescriptions: ['MedicationRequest'],
+    diagnoses: ['Condition'],
+    conditions: ['Condition'],
+    imaging: ['DiagnosticReport'],
+    radiology: ['DiagnosticReport'],
+    reports: ['DiagnosticReport'],
+    visits: ['Encounter'],
+    encounters: ['Encounter'],
+    procedures: ['Procedure'],
+    immunizations: ['Immunization'],
+    vaccines: ['Immunization'],
+    allergies: ['AllergyIntolerance'],
+    patient: ['Patient'],
+    demographics: ['Patient']
+};
+
+function normalizeAllowedResourceClasses(categories: string[]): string[] {
+    const canonicalByLower = new Map<string, string>(
+        CLINICAL_RESOURCE_TYPES.map((resourceType) => [resourceType.toLowerCase(), resourceType])
+    );
+    const result = new Set<string>();
+
+    for (const rawCategory of categories) {
+        const trimmed = String(rawCategory || '').trim();
+        if (!trimmed) continue;
+
+        const lower = trimmed.toLowerCase();
+        const canonical = canonicalByLower.get(lower);
+        if (canonical) {
+            result.add(canonical);
+            continue;
+        }
+
+        const aliased = CATEGORY_ALIASES[lower];
+        if (aliased && aliased.length > 0) {
+            aliased.forEach((resourceType) => result.add(resourceType));
+            continue;
+        }
+
+        // Preserve unknown values so behavior remains transparent for callers.
+        result.add(trimmed);
+    }
+
+    return Array.from(result);
+}
+
 export interface CreateConsentParams {
     patientId: string;
     practitionerId: string;
@@ -29,6 +95,7 @@ export class ConsentService {
     async createConsent(params: CreateConsentParams) {
         const { patientId, practitionerId, allowedCategories, deniedCategories, validDays, requestorId } = params;
         const consentId = uuidv4();
+        const normalizedAllowedCategories = normalizeAllowedResourceClasses(allowedCategories);
 
         const validFrom = new Date();
         const validUntil = new Date();
@@ -57,7 +124,9 @@ export class ConsentService {
                 reference: `Patient/${patientId}`
             },
             performer: [{
-                reference: `Practitioner/${practitionerId}`
+                // Use display-only reference so public/demo FHIR servers without a matching
+                // Practitioner resource can still persist the consent document.
+                display: practitionerId
             }], // Use performer/grantor properly in real FHIR, mapped for simplicity
             provision: {
                 type: 'permit',
@@ -74,7 +143,7 @@ export class ConsentService {
                         }]
                     },
                     reference: {
-                        reference: `Practitioner/${practitionerId}`
+                        display: practitionerId
                     }
                 }],
                 // Categories
@@ -84,6 +153,9 @@ export class ConsentService {
                         code: "access"
                     }]
                 }],
+                class: normalizedAllowedCategories.map((resourceType) => ({
+                    code: resourceType
+                })),
                 // Real FHIR consent is wildly complex. Keeping it simple here. 
                 // or assume 'permit' covers permitted categories and deny covers others.
                 // For MVP: We are storing categories in our cache mainly.
@@ -121,7 +193,7 @@ export class ConsentService {
                 patientId,
                 fhirConsentId: consentId,
                 practitionerId,
-                allowedCategories,
+                allowedCategories: normalizedAllowedCategories,
                 deniedCategories,
                 validFrom,
                 validUntil,

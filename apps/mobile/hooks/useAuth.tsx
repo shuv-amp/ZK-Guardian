@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { smartAuth } from '../services/SMARTAuthService';
+import type { AuthRole } from '../services/SMARTAuthService';
 import { consentClient } from '../services/ConsentHandshakeClient';
 
 export interface AuthContextType {
@@ -8,7 +9,7 @@ export interface AuthContextType {
     patientId: string | null;
     practitionerId: string | null;
     accessToken: string | null;
-    login: () => Promise<boolean>;
+    login: (role?: AuthRole) => Promise<boolean>;
     logout: () => Promise<void>;
     connectionState: 'disconnected' | 'connecting' | 'connected' | 'error';
     getAccessToken: () => Promise<string | null>;
@@ -93,11 +94,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
         };
     }, [isLoading, isAuthenticated, patientId]);
 
-    const login = async (): Promise<boolean> => {
+    const login = async (role: AuthRole = 'patient'): Promise<boolean> => {
         setIsLoading(true);
 
         try {
-            const success = await smartAuth.login();
+            const success = await smartAuth.login(role);
 
             if (success) {
                 setIsAuthenticated(true);

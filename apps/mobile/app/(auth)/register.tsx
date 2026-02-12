@@ -78,7 +78,7 @@ export default function RegisterScreen() {
         setLoading(true);
 
         try {
-            const authSuccess = await login();
+            const authSuccess = await login(selectedRole);
             if (!authSuccess) {
                 throw new Error('SMART_AUTH_FAILED');
             }

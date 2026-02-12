@@ -60,6 +60,35 @@ pnpm circuits:setup
 pnpm dev
 ```
 
+### One-Click Windows Bootstrap
+
+For a clean Windows laptop, run the master bootstrap script:
+
+```powershell
+cd zk-guardian
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap-zk-guardian.ps1 -Mode all
+```
+
+What it does:
+- Installs core tooling (Git, Node LTS, Docker Desktop, pnpm; Android Studio unless `-SkipMobile`).
+- Uses public FHIR (`hapi.fhir.org`) by default, or local Docker FHIR with `-FhirMode local`.
+- Starts a local Hardhat chain, deploys contracts, writes addresses into `.env`.
+- Runs Prisma setup, starts gateway, and runs `verify:full-flow`.
+- Launches Android emulator + mobile install flow (unless `-SkipMobile`).
+
+Examples:
+
+```powershell
+# Default (public FHIR, full E2E verify)
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap-zk-guardian.ps1 -Mode all
+
+# Local FHIR mode
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap-zk-guardian.ps1 -Mode all -FhirMode local
+
+# Stop managed services
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap-zk-guardian.ps1 -Mode stop
+```
+
 ### Running Individual Services
 
 ```bash
@@ -119,4 +148,3 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](SECURITY.md) for full r
 Apache 2.0 License - see [LICENSE](LICENSE) for details.
 
 ---
-

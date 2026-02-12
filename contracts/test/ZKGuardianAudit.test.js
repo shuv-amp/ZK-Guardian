@@ -1,5 +1,5 @@
 const { expect } = require("chai");
-const { ethers } = require("hardhat");
+const { ethers, upgrades } = require("hardhat");
 const { time } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 
 describe("ZKGuardianAudit", function () {
@@ -28,9 +28,14 @@ describe("ZKGuardianAudit", function () {
         const MockVerifier = await ethers.getContractFactory("MockVerifier");
         verifier = await MockVerifier.deploy();
 
-        // Deploy Audit Log
+        // Deploy Audit Log (UUPS proxy)
         const ZKGuardianAudit = await ethers.getContractFactory("ZKGuardianAudit");
-        audit = await ZKGuardianAudit.deploy(await verifier.getAddress());
+        audit = await upgrades.deployProxy(
+            ZKGuardianAudit,
+            [await verifier.getAddress(), owner.address],
+            { initializer: "initialize", kind: "uups" }
+        );
+        await audit.waitForDeployment();
     });
 
     it("should allow a valid proof within time window", async function () {
@@ -120,6 +125,23 @@ describe("ZKGuardianAudit", function () {
 
         // Should emit 2 events
         await expect(tx).to.emit(audit, "AccessAudited");
+
+        const receipt = await tx.wait();
+        const accessEvents = receipt.logs
+            .map((log) => {
+                try {
+                    return audit.interface.parseLog(log);
+                } catch {
+                    return null;
+                }
+            })
+            .filter((parsed) => parsed && parsed.name === "AccessAudited");
+
+        expect(accessEvents.length).to.equal(2);
+        for (const ev of accessEvents) {
+            expect(ev.args.auditor).to.equal(owner.address);
+        }
+
         // Verify storage
         expect(await audit.accessTimestamps(signals1[6])).to.equal(nextTime);
         expect(await audit.accessTimestamps(signals2[6])).to.equal(nextTime);

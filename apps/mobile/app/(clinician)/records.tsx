@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
 import { authorizedFetch, APIError } from '../../services/API';
+import { mapAccessErrorMessage, parseGatewayError } from '../../services/gatewayError';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
 
 /**
@@ -124,10 +125,11 @@ export default function RecordsScreen() {
         return () => {
             isCancelled = true;
         };
-    }, [patientId, practitionerId]);
+    }, [patientId, practitionerId, logout]);
 
     const searchResources = async () => {
-        if (!patientId.trim()) {
+        const trimmedPatientId = patientId.trim();
+        if (!trimmedPatientId) {
             setError('Please enter a patient ID');
             return;
         }
@@ -135,10 +137,11 @@ export default function RecordsScreen() {
         setIsLoading(true);
         setError(null);
         setZkProofHash(null);
+        setResources([]);
 
         try {
             const response = await authorizedFetch(
-                `${config.GATEWAY_URL}/fhir/${selectedType}?patient=${patientId}`
+                `${config.GATEWAY_URL}/fhir/${selectedType}?patient=${trimmedPatientId}`
             );
 
             // Capture ZK proof hash from response headers
@@ -151,10 +154,9 @@ export default function RecordsScreen() {
                 const bundle = await response.json();
                 const entries = bundle.entry?.map((e: any) => e.resource) || [];
                 setResources(entries);
-            } else if (response.status === 403) {
-                setError('Access denied. Patient consent required.');
             } else {
-                setError('Failed to fetch resources');
+                const { code, message } = await parseGatewayError(response);
+                setError(mapAccessErrorMessage(code, message));
             }
         } catch (err: any) {
              if (err instanceof APIError && err.status === 401) {

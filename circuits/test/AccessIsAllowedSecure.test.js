@@ -16,9 +16,9 @@ const snarkjs = require("snarkjs");
  */
 
 // Paths to compiled circuit artifacts
-const WASM_PATH = path.join(__dirname, "../build/AccessIsAllowedSecure_js/AccessIsAllowedSecure.wasm");
-const ZKEY_PATH = path.join(__dirname, "../build/AccessIsAllowedSecure_final.zkey");
-const VKEY_PATH = path.join(__dirname, "../build/AccessIsAllowedSecure_verification_key.json");
+const WASM_PATH = path.join(__dirname, "../build/AccessIsAllowedSecure/AccessIsAllowedSecure_js/AccessIsAllowedSecure.wasm");
+const ZKEY_PATH = path.join(__dirname, "../build/AccessIsAllowedSecure/AccessIsAllowedSecure_final.zkey");
+const VKEY_PATH = path.join(__dirname, "../build/AccessIsAllowedSecure/AccessIsAllowedSecure_verification_key.json");
 
 // Import utilities
 const {

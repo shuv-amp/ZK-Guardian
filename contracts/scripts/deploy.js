@@ -1,4 +1,5 @@
 const hre = require("hardhat");
+const { ethers, upgrades } = hre;
 const fs = require("fs");
 const path = require("path");
 
@@ -16,74 +17,113 @@ function saveDeployment(data) {
 }
 
 async function main() {
-    console.log("Starting ZK Guardian Deployment...");
+    console.log("Starting ZK Guardian deployment...");
 
-    const [deployer] = await hre.ethers.getSigners();
-    console.log("Deploying contracts with account:", deployer.address);
+    const [deployer] = await ethers.getSigners();
+    if (!deployer) {
+        throw new Error(
+            "No deployer account configured. Set DEPLOYER_PRIVATE_KEY in .env.local or .env and fund it on Amoy."
+        );
+    }
+    console.log("Deployer:", deployer.address);
 
     const deployed = loadDeployment();
 
-    // 1. Deploy AccessIsAllowedSecureVerifier
+    // 1) Access verifier
     if (!deployed.AccessIsAllowedSecureVerifier) {
-        const SecureVerifier = await hre.ethers.getContractFactory("AccessIsAllowedSecureVerifier");
+        const SecureVerifier = await ethers.getContractFactory("AccessIsAllowedSecureVerifier");
         const secureVerifier = await SecureVerifier.deploy();
         await secureVerifier.waitForDeployment();
         deployed.AccessIsAllowedSecureVerifier = await secureVerifier.getAddress();
-        console.log(`✅ AccessIsAllowedSecureVerifier deployed to: ${deployed.AccessIsAllowedSecureVerifier}`);
+        console.log(`AccessIsAllowedSecureVerifier: ${deployed.AccessIsAllowedSecureVerifier}`);
         saveDeployment(deployed);
-        await new Promise(r => setTimeout(r, 5000)); // Wait 5s
     } else {
-        console.log(`✅ AccessIsAllowedSecureVerifier already at: ${deployed.AccessIsAllowedSecureVerifier}`);
+        console.log(`AccessIsAllowedSecureVerifier exists: ${deployed.AccessIsAllowedSecureVerifier}`);
     }
 
-    // 2. Deploy BreakGlassVerifier
+    // 2) Break-glass verifier
     if (!deployed.BreakGlassVerifier) {
-        const BreakGlassVerifier = await hre.ethers.getContractFactory("BreakGlassVerifier");
+        const BreakGlassVerifier = await ethers.getContractFactory("BreakGlassVerifier");
         const breakGlassVerifier = await BreakGlassVerifier.deploy();
         await breakGlassVerifier.waitForDeployment();
         deployed.BreakGlassVerifier = await breakGlassVerifier.getAddress();
-        console.log(`✅ BreakGlassVerifier deployed to: ${deployed.BreakGlassVerifier}`);
+        console.log(`BreakGlassVerifier: ${deployed.BreakGlassVerifier}`);
         saveDeployment(deployed);
-        await new Promise(r => setTimeout(r, 5000));
     } else {
-        console.log(`✅ BreakGlassVerifier already at: ${deployed.BreakGlassVerifier}`);
+        console.log(`BreakGlassVerifier exists: ${deployed.BreakGlassVerifier}`);
     }
 
-    // 3. Deploy ConsentRevocationRegistry
+    // 3) Consent revocation registry (non-upgradeable)
     if (!deployed.ConsentRevocationRegistry) {
-        const ConsentRevocationRegistry = await hre.ethers.getContractFactory("ConsentRevocationRegistry");
+        const ConsentRevocationRegistry = await ethers.getContractFactory("ConsentRevocationRegistry");
         const registry = await ConsentRevocationRegistry.deploy();
         await registry.waitForDeployment();
         deployed.ConsentRevocationRegistry = await registry.getAddress();
-        console.log(`✅ ConsentRevocationRegistry deployed to: ${deployed.ConsentRevocationRegistry}`);
+        console.log(`ConsentRevocationRegistry: ${deployed.ConsentRevocationRegistry}`);
         saveDeployment(deployed);
-        await new Promise(r => setTimeout(r, 5000));
     } else {
-        console.log(`✅ ConsentRevocationRegistry already at: ${deployed.ConsentRevocationRegistry}`);
+        console.log(`ConsentRevocationRegistry exists: ${deployed.ConsentRevocationRegistry}`);
     }
 
-    // 4. Deploy ZKGuardianAudit (linked to SecureVerifier)
-    if (!deployed.ZKGuardianAudit) {
-        const ZKGuardianAudit = await hre.ethers.getContractFactory("ZKGuardianAudit");
-        const audit = await ZKGuardianAudit.deploy(deployed.AccessIsAllowedSecureVerifier);
-        await audit.waitForDeployment();
-        deployed.ZKGuardianAudit = await audit.getAddress();
-        console.log(`✅ ZKGuardianAudit deployed to: ${deployed.ZKGuardianAudit}`);
+    // 4) Credential registry (UUPS)
+    if (!deployed.CredentialRegistryProxy) {
+        const CredentialRegistry = await ethers.getContractFactory("CredentialRegistry");
+        const credentialRegistry = await upgrades.deployProxy(
+            CredentialRegistry,
+            [deployer.address],
+            { initializer: "initialize", kind: "uups" }
+        );
+        await credentialRegistry.waitForDeployment();
+        deployed.CredentialRegistryProxy = await credentialRegistry.getAddress();
+        console.log(`CredentialRegistryProxy: ${deployed.CredentialRegistryProxy}`);
         saveDeployment(deployed);
     } else {
-        console.log(`✅ ZKGuardianAudit already at: ${deployed.ZKGuardianAudit}`);
+        console.log(`CredentialRegistryProxy exists: ${deployed.CredentialRegistryProxy}`);
+    }
+
+    // 5) Audit contract (UUPS)
+    if (!deployed.ZKGuardianAuditProxy) {
+        const Audit = await ethers.getContractFactory("ZKGuardianAudit");
+        const proxy = await upgrades.deployProxy(
+            Audit,
+            [deployed.AccessIsAllowedSecureVerifier, deployer.address],
+            { initializer: "initialize", kind: "uups" }
+        );
+        await proxy.waitForDeployment();
+        deployed.ZKGuardianAuditProxy = await proxy.getAddress();
+        deployed.ZKGuardianAudit = deployed.ZKGuardianAuditProxy; // backward compatibility
+        deployed.ZKGuardianAuditImpl = await upgrades.erc1967.getImplementationAddress(deployed.ZKGuardianAuditProxy);
+        console.log(`ZKGuardianAuditProxy: ${deployed.ZKGuardianAuditProxy}`);
+        console.log(`ZKGuardianAuditImpl:  ${deployed.ZKGuardianAuditImpl}`);
+        saveDeployment(deployed);
+    } else {
+        deployed.ZKGuardianAudit = deployed.ZKGuardianAuditProxy;
+        console.log(`ZKGuardianAuditProxy exists: ${deployed.ZKGuardianAuditProxy}`);
+        saveDeployment(deployed);
+    }
+
+    // 6) Link break-glass dependencies
+    const Audit = await ethers.getContractFactory("ZKGuardianAudit");
+    const audit = Audit.attach(deployed.ZKGuardianAuditProxy);
+
+    const currentBreakGlassVerifier = await audit.breakGlassVerifier();
+    if (currentBreakGlassVerifier.toLowerCase() !== deployed.BreakGlassVerifier.toLowerCase()) {
+        await (await audit.setBreakGlassVerifier(deployed.BreakGlassVerifier)).wait();
+        console.log(`Linked BreakGlassVerifier -> ${deployed.BreakGlassVerifier}`);
+    }
+
+    const currentCredentialRegistry = await audit.credentialRegistry();
+    if (currentCredentialRegistry.toLowerCase() !== deployed.CredentialRegistryProxy.toLowerCase()) {
+        await (await audit.setCredentialRegistry(deployed.CredentialRegistryProxy)).wait();
+        console.log(`Linked CredentialRegistry -> ${deployed.CredentialRegistryProxy}`);
     }
 
     console.log("\n--- Deployment Summary ---");
-    console.log(`Secure Verifier: ${deployed.AccessIsAllowedSecureVerifier}`);
-    console.log(`BreakGlass Ver:  ${deployed.BreakGlassVerifier}`);
-    console.log(`Audit Log:       ${deployed.ZKGuardianAudit}`);
-    console.log(`Registry:        ${deployed.ConsentRevocationRegistry}`);
-
-    // Verification Logic (Only runs if manually requested or re-run)
-    if (hre.network.name === "amoy") {
-        console.log("\n Skipping automatic verification to save time/gas. Use verify script manually.");
-    }
+    console.log(`Audit Proxy:                 ${deployed.ZKGuardianAuditProxy}`);
+    console.log(`Access Verifier:             ${deployed.AccessIsAllowedSecureVerifier}`);
+    console.log(`BreakGlass Verifier:         ${deployed.BreakGlassVerifier}`);
+    console.log(`ConsentRevocationRegistry:   ${deployed.ConsentRevocationRegistry}`);
+    console.log(`CredentialRegistry Proxy:    ${deployed.CredentialRegistryProxy}`);
 }
 
 main().catch((error) => {

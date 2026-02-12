@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, StatusBar, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
 import { authorizedFetch, APIError } from '../../services/API';
+import { mapAccessErrorMessage, parseGatewayError } from '../../services/gatewayError';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
 
 /**
@@ -14,7 +15,7 @@ import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
  * Interface for clinicians to request patient data access.
  */
 export default function ClinicianDashboard() {
-    const { practitionerId, logout, getAccessToken } = useAuth();
+    const { practitionerId, logout } = useAuth();
     const router = useRouter();
     const [patientSearch, setPatientSearch] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -23,18 +24,6 @@ export default function ClinicianDashboard() {
     const [consentStatus, setConsentStatus] = useState<'unknown' | 'active' | 'expired' | 'none'>('unknown');
     const [consentExpiresAt, setConsentExpiresAt] = useState<string | null>(null);
     const [isCheckingConsent, setIsCheckingConsent] = useState(false);
-
-    // Track polling interval for cleanup
-    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-    const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-    // Cleanup polling on unmount
-    useEffect(() => {
-        return () => {
-            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-            if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
-        };
-    }, []);
 
     useEffect(() => {
         let isCancelled = false;
@@ -105,32 +94,25 @@ export default function ClinicianDashboard() {
         return () => {
             isCancelled = true;
         };
-    }, [patientSearch, practitionerId]);
+    }, [patientSearch, practitionerId, logout]);
 
     const handleAccessRequest = async (resourceType: string) => {
         if (!patientSearch.trim()) return;
 
         setIsLoading(true);
-        setRequestStatus('loading');
-        setStatusMessage('Initiating Request...');
+        setRequestStatus('waiting');
+        setStatusMessage('Requesting access and waiting for patient consent...');
 
         try {
             const response = await authorizedFetch(`${config.GATEWAY_URL}/fhir/${resourceType}?patient=${patientSearch}`);
 
             if (response.ok) {
                 setRequestStatus('approved');
-                setStatusMessage('Access Granted - View Records');
-                console.log('Access granted');
-            } else if (response.status === 403) {
-                // Handshake triggered
-                setRequestStatus('waiting');
-                setStatusMessage('Waiting for Patient Consent...');
-
-                // Poll for result
-                pollForConsent(resourceType);
+                setStatusMessage('Access granted. You can now view records.');
             } else {
+                const { code, message } = await parseGatewayError(response);
                 setRequestStatus('denied');
-                setStatusMessage('Access Denied');
+                setStatusMessage(mapAccessErrorMessage(code, message));
             }
         } catch (error: any) {
             console.error('Access request failed:', error);
@@ -141,36 +123,9 @@ export default function ClinicianDashboard() {
                 setStatusMessage('Network Error - Check Connection');
             }
             setRequestStatus('denied');
+        } finally {
+            setIsLoading(false);
         }
-        setIsLoading(false);
-    };
-
-    const pollForConsent = async (resourceType: string) => {
-        // Clear any existing polling
-        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-        if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
-
-        pollingIntervalRef.current = setInterval(async () => {
-            try {
-                const response = await authorizedFetch(`${config.GATEWAY_URL}/fhir/${resourceType}?patient=${patientSearch}`);
-
-                if (response.ok) {
-                    if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-                    if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
-                    setRequestStatus('approved');
-                    setStatusMessage('Consent Received! Access Granted.');
-                }
-            } catch (e) {
-                // ignore errors while polling
-            }
-        }, 3000);
-
-        // Timeout after 60s
-        pollingTimeoutRef.current = setTimeout(() => {
-            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-            setRequestStatus('denied');
-            setStatusMessage('Request Timed Out - Patient did not respond');
-        }, 60000);
     };
 
     return (

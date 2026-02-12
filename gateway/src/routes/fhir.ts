@@ -9,6 +9,16 @@ export const fhirRouter: Router = Router();
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || "http://localhost:8080/fhir";
 
+function applyZkAuditHeaders(req: any, res: Response): void {
+    if (req.zkAudit) {
+        res.setHeader('X-ZK-Audit-Hash', req.zkAudit.proofHash);
+        res.setHeader('X-ZK-Tx-Hash', req.zkAudit.txHash);
+        res.setHeader('X-ZK-Access-Event', req.zkAudit.accessEventHash);
+    }
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+}
+
 // 1. ZK Audit Layer: Enforce privacy policy before touching the upstream server
 // Debug logging for FHIR requests
 fhirRouter.use((req, res, next) => {
@@ -16,8 +26,18 @@ fhirRouter.use((req, res, next) => {
     next();
 });
 
-// 1. ZK Audit Layer: Enforce privacy policy before touching the upstream server
-// MOVED: zkAuthMiddleware is now applied AFTER synthetic routes to allow dev bypass
+// Ensure synthetic responses and JSON error fallbacks carry the same response headers.
+fhirRouter.use((req, res, next) => {
+    const originalJson = res.json.bind(res);
+    res.json = ((body: any) => {
+        applyZkAuditHeaders(req, res);
+        return originalJson(body);
+    }) as typeof res.json;
+    next();
+});
+
+// 1. ZK Audit Layer: Enforce privacy policy before touching any data source.
+fhirRouter.use(zkAuthMiddleware);
 
 // Dev-only: Synthetic Consent to bypass broken HAPI
 fhirRouter.get('/Consent', async (req: Request, res: Response, next) => {
@@ -217,9 +237,6 @@ fhirRouter.get('/Encounter', async (req: Request, res: Response, next) => {
     next();
 });
 
-// 2. ZK Audit Layer: Enforce privacy policy for everything else
-fhirRouter.use(zkAuthMiddleware);
-
 // 2. Proxy Layer: Forward to HAPI FHIR with proper ZK headers
 const proxy = createProxyMiddleware({
     target: HAPI_FHIR_URL,
@@ -235,14 +252,7 @@ const proxy = createProxyMiddleware({
             logger.debug({ target: HAPI_FHIR_URL, path: req.path }, 'Proxying FHIR request');
         },
         proxyRes: responseInterceptor(async (responseBuffer, proxyRes, req: any, res: any) => {
-            // Forward headers
-            if (req.zkAudit) {
-                res.setHeader('X-ZK-Audit-Hash', req.zkAudit.proofHash);
-                res.setHeader('X-ZK-Tx-Hash', req.zkAudit.txHash);
-                res.setHeader('X-ZK-Access-Event', req.zkAudit.accessEventHash);
-            }
-            res.setHeader('X-Content-Type-Options', 'nosniff');
-            res.setHeader('X-Frame-Options', 'DENY');
+            applyZkAuditHeaders(req, res);
 
             // Handle HAPI Errors (5xx) in Dev Mode
             if (proxyRes.statusCode && proxyRes.statusCode >= 500 && env.NODE_ENV !== 'production') {
@@ -287,4 +297,3 @@ const proxy = createProxyMiddleware({
 
 // Forward all requests
 fhirRouter.use('/', proxy);
-

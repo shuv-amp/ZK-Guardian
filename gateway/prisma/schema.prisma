@@ -204,7 +204,9 @@ model BreakGlassSession {
   requestId           String    @map("request_id")
   createdAt           DateTime  @default(now()) @map("created_at")
 
-  @@unique([patientId, clinicianId, status], name: "unique_active_session")
+  // NOTE: Active-session uniqueness is enforced in application logic.
+  // A strict unique(patientId, clinicianId, status) blocks legitimate
+  // historical CLOSED/EXPIRED sessions for the same clinician+patient pair.
   @@index([patientId])
   @@index([clinicianId])
   @@index([status])

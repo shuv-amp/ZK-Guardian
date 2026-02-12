@@ -78,4 +78,44 @@ describe('ZKProofService Integration', () => {
         console.log("Proof generated successfully (Mocked):");
         console.log("Public Signals:", result.publicSignals);
     }, 30000);
+
+    it('should reject access when consent does not authorize the clinician', async () => {
+        const consentWithSpecificClinician = {
+            resourceType: "Consent",
+            id: "consent-actor-bound",
+            status: "active",
+            patient: { reference: "Patient/123" },
+            provision: {
+                period: {
+                    start: "2020-01-01",
+                    end: "2030-01-01"
+                },
+                class: [{ code: "Observation" }],
+                actor: [{
+                    reference: {
+                        reference: "Practitioner/practitioner-allowed"
+                    }
+                }]
+            }
+        };
+
+        (axios.get as any).mockResolvedValue({
+            data: {
+                entry: [{ resource: consentWithSpecificClinician }]
+            }
+        });
+
+        const request = {
+            patientId: "123",
+            clinicianId: "practitioner-blocked",
+            resourceId: "Observation",
+            resourceType: "Observation",
+            patientNullifier: "1234567890",
+            sessionNonce: "987654321"
+        };
+
+        await expect(zkProofService.generateAccessProof(request))
+            .rejects
+            .toThrow("CONSENT_PRACTITIONER_MISMATCH");
+    });
 });

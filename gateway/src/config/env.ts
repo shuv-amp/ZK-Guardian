@@ -10,6 +10,18 @@ import dotenv from 'dotenv';
 // Load environment variables from .env file
 dotenv.config();
 
+const booleanFromEnv = (defaultValue: boolean) =>
+    z.preprocess((value) => {
+        if (value === undefined || value === null) return undefined;
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+            if (['false', '0', 'no', 'n', 'off', ''].includes(normalized)) return false;
+        }
+        return value;
+    }, z.boolean().default(defaultValue));
+
 const envSchema = z.object({
     // Server
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -61,7 +73,7 @@ const envSchema = z.object({
     SMART_AUDIENCE: z.string().optional(),
     SMART_PRIVATE_JWK: z.string().optional(),
     SMART_REDIRECT_URIS: z.string().optional(),
-    ALLOW_DEV_BYPASS: z.coerce.boolean().default(false),
+    ALLOW_DEV_BYPASS: booleanFromEnv(false),
 
     // Logging
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -69,7 +81,7 @@ const envSchema = z.object({
     LOG_RETENTION_DAYS: z.coerce.number().default(14),
 
     // Features
-    PROMETHEUS_ENABLED: z.coerce.boolean().default(true),
+    PROMETHEUS_ENABLED: booleanFromEnv(true),
     BATCH_INTERVAL_MS: z.coerce.number().default(300000), // 5 minutes
     BATCH_SIZE: z.coerce.number().default(10),
 
@@ -88,9 +100,9 @@ const envSchema = z.object({
     CIRCUIT_ZKEY_SHA256: z.string().optional(),
 
     // Feature flags
-    ENABLE_TRACING: z.coerce.boolean().default(false),
-    ENABLE_WORKER_POOL: z.coerce.boolean().default(false),
-    ENABLE_SYNTHETIC_CONSENT: z.coerce.boolean().default(false)
+    ENABLE_TRACING: booleanFromEnv(false),
+    ENABLE_WORKER_POOL: booleanFromEnv(false),
+    ENABLE_SYNTHETIC_CONSENT: booleanFromEnv(false)
 });
 
 function loadEnv() {

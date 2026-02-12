@@ -20,6 +20,7 @@ import { logger } from "../../lib/logger.js";
 import { env } from "../../config/env.js";
 import { checkConsentNotRevoked } from "../../lib/revocationChecker.js";
 import { batchQueueGauge, proofGenerationHistogram } from "../../metrics/prometheus.js";
+import { prisma } from "../../db/client.js";
 
 // In production, these should be environment variables or copied to build dir
 // For monorepo dev, we point to the siblings
@@ -80,6 +81,58 @@ class ZKProofService {
         this.snarkjs = mock;
     }
 
+    private normalizePractitionerId(value: string): string {
+        return String(value || '')
+            .replace(/^Practitioner\//i, '')
+            .trim()
+            .toLowerCase();
+    }
+
+    private extractAuthorizedPractitionerIds(consent: any): Set<string> {
+        const practitionerIds = new Set<string>();
+        const addCandidate = (candidate: unknown): void => {
+            if (typeof candidate !== 'string') return;
+            const normalized = this.normalizePractitionerId(candidate);
+            if (normalized) practitionerIds.add(normalized);
+        };
+
+        const performers = Array.isArray(consent?.performer) ? consent.performer : [];
+        for (const performer of performers) {
+            addCandidate(performer?.reference);
+            addCandidate(performer?.display);
+            if (performer?.actor) {
+                addCandidate(performer.actor.reference);
+                addCandidate(performer.actor.display);
+            }
+        }
+
+        const actors = Array.isArray(consent?.provision?.actor) ? consent.provision.actor : [];
+        for (const actor of actors) {
+            addCandidate(actor?.reference?.reference);
+            addCandidate(actor?.reference?.display);
+        }
+
+        return practitionerIds;
+    }
+
+    private consentRecencyScore(consent: any): number {
+        const candidates = [
+            consent?.meta?.lastUpdated,
+            consent?.dateTime,
+            consent?.provision?.period?.start
+        ];
+
+        for (const candidate of candidates) {
+            if (typeof candidate !== 'string') continue;
+            const parsed = Date.parse(candidate);
+            if (!Number.isNaN(parsed)) {
+                return parsed;
+            }
+        }
+
+        return 0;
+    }
+
     async initialize() {
         if (this.initialized) return;
         try {
@@ -112,10 +165,40 @@ class ZKProofService {
             throw new Error("NO_ACTIVE_CONSENT");
         }
 
+        // Defensively enforce active status in case upstream filtering is lax.
+        if (String(consent.status || '').toLowerCase() !== 'active') {
+            logger.warn({
+                patientId,
+                clinicianId,
+                consentId: consent.id,
+                consentStatus: consent.status
+            }, 'Consent is not active; denying access');
+            throw new Error("CONSENT_REVOKED");
+        }
+
+        logger.debug({
+            patientId,
+            clinicianId,
+            consentId: consent.id,
+            consentStatus: consent.status,
+            consentUpdatedAt: consent?.meta?.lastUpdated,
+            consentPerformer: consent?.performer?.[0]?.display || consent?.performer?.[0]?.reference || null
+        }, 'Selected consent for access proof');
+
         // 1.1 Scope Check (Critical: Must happen before Dev Bypass)
         // Check if the consent actually covers the requested resource
-        const allowedScopes = consent.provision?.class?.map((c: any) => c.code) || [];
-        const isAllowed = allowedScopes.includes(resourceType) || allowedScopes.includes('*');
+        const allowedScopes = (consent.provision?.class || [])
+            .map((entry: any) => String(entry?.code || '').trim())
+            .filter(Boolean);
+
+        const normalizedResourceType = resourceType.toLowerCase();
+        const isAllowed = allowedScopes.some((scope: string) => {
+            if (scope === '*') return true;
+            const normalizedScope = scope.toLowerCase();
+            if (normalizedScope === normalizedResourceType) return true;
+            const uriTail = normalizedScope.split('/').pop();
+            return uriTail === normalizedResourceType;
+        });
 
         if (!isAllowed) {
             logger.warn({ patientId, resourceType, allowedScopes }, 'Consent exists but does not cover this resource');
@@ -123,11 +206,31 @@ class ZKProofService {
             throw new Error("CONSENT_SCOPE_MISMATCH");
         }
 
-        // DEV MODE BYPASS - Mock Proof ONLY if consent is valid
-        if (env.NODE_ENV === 'development') {
-            logger.warn('Mocking ZK Proof generation (DEV mode) - Consent Validated');
+        // Enforce that clinician access only succeeds when consent explicitly allows
+        // that practitioner. If the consent does not encode practitioner constraints,
+        // we preserve backward-compatible behavior and treat it as non-restrictive.
+        const authorizedPractitioners = this.extractAuthorizedPractitionerIds(consent);
+        if (authorizedPractitioners.size > 0) {
+            const requestedPractitioner = this.normalizePractitionerId(clinicianId);
+            const matchesPractitioner = authorizedPractitioners.has(requestedPractitioner);
+            if (!matchesPractitioner) {
+                logger.warn({
+                    patientId,
+                    clinicianId,
+                    authorizedPractitioners: Array.from(authorizedPractitioners)
+                }, 'Consent exists but clinician is not authorized by consent actor/performer');
+                throw new Error("CONSENT_PRACTITIONER_MISMATCH");
+            }
+        }
+
+        // DEV MODE BYPASS - Mock Proof ONLY if explicitly allowed
+        // Uses ALLOW_DEV_BYPASS so that development defaults to real proofs
+        // unless tests or local demos deliberately opt out.
+        if (env.ALLOW_DEV_BYPASS) {
+            logger.warn('Mocking ZK Proof generation (ALLOW_DEV_BYPASS=true) - Consent Validated');
             // Simulate processing time
             await new Promise(resolve => setTimeout(resolve, 500));
+            const mockTimestamp = Math.floor(Date.now() / 1000).toString();
             return {
                 proof: {
                     a: ["0x1", "0x2"],
@@ -135,21 +238,27 @@ class ZKProofService {
                     c: ["0x5", "0x6"]
                 },
                 publicSignals: [
-                    "0x1", // root
-                    "0x2", // nullifierHash
-                    "0x1234567890abcdef", // accessEventHash (mocked)
-                    "0x4",
-                    "0x5",
-                    "0x6",
-                    "0x7"
+                    "1", // isValid
+                    "0x2", // blindedPatientId
+                    "0x3", // blindedAccessHash
+                    "0x4", // nullifierHash
+                    "0x5", // proofOfPolicyMatch
+                    mockTimestamp, // currentTimestamp
+                    "0x1234567890abcdef" // accessEventHash (mocked)
                 ],
                 proofHash: "0xMOCK_PROOF_" + crypto.randomBytes(32).toString('hex'),
-                timestamp: Math.floor(Date.now() / 1000)
+                timestamp: Number(mockTimestamp)
             };
         }
 
         // on-chain revocation check
         const consentHash = await hashFhirConsent(consent);
+        logger.debug({
+            patientId,
+            clinicianId,
+            consentId: consent.id,
+            consentHash: consentHash.slice(0, 18) + '...'
+        }, 'Checking consent revocation state');
         await checkConsentNotRevoked(consentHash);
 
         // 2. Prepare Inputs
@@ -259,13 +368,40 @@ class ZKProofService {
      */
     private async fetchActiveConsent(patientId: string) {
         try {
+            let localConsents: Array<{
+                fhirConsentId: string;
+                status: string;
+                validFrom: Date;
+                validUntil: Date;
+                revokedAt: Date | null;
+            }> = [];
+            try {
+                localConsents = await prisma.consentCache.findMany({
+                    where: { patientId },
+                    select: {
+                        fhirConsentId: true,
+                        status: true,
+                        validFrom: true,
+                        validUntil: true,
+                        revokedAt: true
+                    }
+                });
+            } catch (prismaError: any) {
+                logger.debug({ patientId, error: prismaError?.message }, 'Consent cache lookup failed; proceeding without local reconciliation');
+            }
+            const localConsentState = new Map<string, string>();
+            for (const consent of localConsents) {
+                localConsentState.set(consent.fhirConsentId, consent.status);
+            }
+            const hasLocalConsentHistory = localConsents.length > 0;
+
             // Assuming HAPI FHIR is running and accessible
             const response = await axios.get(`${HAPI_FHIR_URL}/Consent`, {
                 params: {
                     patient: `Patient/${patientId}`,
                     status: "active",
-                    _sort: "-date",
-                    _count: 1
+                    _sort: "-_lastUpdated",
+                    _count: 200
                 },
                 headers: { Accept: "application/fhir+json" },
                 timeout: 10000
@@ -273,6 +409,13 @@ class ZKProofService {
 
             const bundle = response.data;
             if (!bundle.entry || bundle.entry.length === 0) {
+                // If we already know this patient has consent history locally, do not
+                // auto-create synthetic consent. This preserves revoke semantics.
+                if (hasLocalConsentHistory) {
+                    logger.info({ patientId }, "No active consent in FHIR; local consent history exists, denying access");
+                    return null;
+                }
+
                 // fake consent for devs if configured
                 if (env.ENABLE_SYNTHETIC_CONSENT) {
                     logger.warn({ patientId }, 'using synthetic consent (dev flag on)');
@@ -281,7 +424,37 @@ class ZKProofService {
                 return null;
             }
 
-            return bundle.entry[0].resource;
+            const activeConsents = bundle.entry
+                .map((entry: any) => entry?.resource)
+                .filter((resource: any) => {
+                    if (!resource) return false;
+                    if (String(resource.status || '').toLowerCase() !== 'active') return false;
+                    // Local cache is the authoritative state for revoke operations in
+                    // this prototype because public FHIR may reject status patches.
+                    const localStatus = localConsentState.get(String(resource.id || ''));
+                    if (localStatus && localStatus !== 'active') {
+                        return false;
+                    }
+                    return true;
+                });
+
+            if (activeConsents.length === 0) {
+                if (hasLocalConsentHistory) {
+                    logger.info({ patientId }, "No locally-active consent after reconciliation; denying access");
+                    return null;
+                }
+                if (env.ENABLE_SYNTHETIC_CONSENT) {
+                    logger.warn({ patientId }, 'using synthetic consent (dev flag on)');
+                    return this.createSyntheticConsent(patientId);
+                }
+                return null;
+            }
+
+            activeConsents.sort((a: any, b: any) =>
+                this.consentRecencyScore(b) - this.consentRecencyScore(a)
+            );
+
+            return activeConsents[0];
         } catch (error: any) {
             // In development, return synthetic consent to enable testing without FHIR
             if (env.ENABLE_SYNTHETIC_CONSENT) {

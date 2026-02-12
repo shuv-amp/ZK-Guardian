@@ -1,6 +1,7 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
+import * as Crypto from 'expo-crypto';
 import * as SecureStore from '../utils/SecureStorage';
 import { config, isBackendConfigured } from '../config/env';
 
@@ -26,6 +27,8 @@ interface StoredTokens {
     practitionerId?: string;
 }
 
+export type AuthRole = 'patient' | 'clinician';
+
 /**
  * SMART Auth Service
  * 
@@ -35,6 +38,78 @@ interface StoredTokens {
 export class SMARTAuthService {
     private discoveryDocument: AuthSession.DiscoveryDocument | null = null;
     private tokens: StoredTokens | null = null;
+
+    private randomString(length = 64): string {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+        let result = '';
+        for (let i = 0; i < length; i++) {
+            result += chars[Math.floor(Math.random() * chars.length)];
+        }
+        return result;
+    }
+
+    private async createPkceChallenge(codeVerifier: string): Promise<string> {
+        const digest = await Crypto.digestStringAsync(
+            Crypto.CryptoDigestAlgorithm.SHA256,
+            codeVerifier,
+            { encoding: Crypto.CryptoEncoding.BASE64 }
+        );
+        return digest.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    }
+
+    private async directDevLogin(role: AuthRole): Promise<boolean> {
+        if (!config.ENABLE_DEV_DIRECT_LOGIN || !__DEV__) {
+            return false;
+        }
+
+        const redirectUri = AuthSession.makeRedirectUri({
+            scheme: 'zkguardian',
+            path: 'auth',
+        });
+        const state = this.randomString(24);
+        const codeVerifier = this.randomString(72);
+        const codeChallenge = await this.createPkceChallenge(codeVerifier);
+        const patientId = 'patient-riley';
+        const clinicianId = 'practitioner-rajesh';
+
+        const body = new URLSearchParams({
+            client_id: 'zk-guardian-mobile',
+            redirect_uri: redirectUri,
+            state,
+            scope: role === 'patient'
+                ? 'openid fhirUser offline_access patient/*.read launch/patient'
+                : 'openid fhirUser offline_access user/*.read launch',
+            code_challenge: codeChallenge,
+            code_challenge_method: 'S256',
+            role,
+            role_hint: role,
+            patient_id: role === 'patient' ? patientId : '',
+            clinician_id: role === 'clinician' ? clinicianId : '',
+        });
+
+        const authResponse = await fetch(`${config.GATEWAY_URL}/oauth/authorize-submit`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Dev-Direct': 'true',
+            },
+            body: body.toString(),
+        });
+
+        if (!authResponse.ok) {
+            const text = await authResponse.text();
+            console.warn('[SMARTAuth] Dev direct authorize failed:', authResponse.status, text);
+            return false;
+        }
+
+        const authData = await authResponse.json() as { code?: string };
+        if (!authData.code) {
+            console.warn('[SMARTAuth] Dev direct authorize missing code');
+            return false;
+        }
+
+        return this.exchangeCodeForTokens(authData.code, redirectUri, codeVerifier);
+    }
 
     private async ensureDiscoveryDocument(): Promise<boolean> {
         if (this.discoveryDocument) {
@@ -84,7 +159,7 @@ export class SMARTAuthService {
      * Start the login flow.
      * Pops open the system browser for the user to sign in.
      */
-    async login(): Promise<boolean> {
+    async login(role: AuthRole = 'patient'): Promise<boolean> {
         if (!isBackendConfigured()) {
             console.error('[SMARTAuth] Backend not configured');
             return false;
@@ -94,6 +169,14 @@ export class SMARTAuthService {
             const hasDiscovery = await this.ensureDiscoveryDocument();
             if (!hasDiscovery) {
                 throw new Error('Failed to fetch SMART configuration');
+            }
+
+            if (config.ENABLE_DEV_DIRECT_LOGIN && __DEV__) {
+                const directSuccess = await this.directDevLogin(role);
+                if (directSuccess) {
+                    return true;
+                }
+                console.warn('[SMARTAuth] Dev direct login failed, falling back to browser flow');
             }
 
             // Build auth request
@@ -108,12 +191,15 @@ export class SMARTAuthService {
                     'openid',
                     'fhirUser',
                     'offline_access',
-                    'patient/*.read',
-                    'launch/patient',
+                    role === 'patient' ? 'patient/*.read' : 'user/*.read',
+                    role === 'patient' ? 'launch/patient' : 'launch',
                 ],
                 responseType: AuthSession.ResponseType.Code,
                 redirectUri,
                 usePKCE: true,
+                extraParams: {
+                    role_hint: role,
+                },
             });
 
             // Prompt user

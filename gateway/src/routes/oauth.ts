@@ -43,7 +43,8 @@ const authorizeQuerySchema = z.object({
     state: z.string().min(1),
     scope: z.string().optional().default(''),
     code_challenge: z.string().min(20),
-    code_challenge_method: z.literal('S256').optional().default('S256')
+    code_challenge_method: z.literal('S256').optional().default('S256'),
+    role_hint: z.enum(['patient', 'clinician']).optional()
 });
 
 const authorizeBodySchema = z.object({
@@ -54,6 +55,7 @@ const authorizeBodySchema = z.object({
     code_challenge: z.string().min(20),
     code_challenge_method: z.literal('S256').optional().default('S256'),
     role: z.enum(['patient', 'clinician']),
+    role_hint: z.enum(['patient', 'clinician']).optional(),
     patient_id: z.string().optional(),
     clinician_id: z.string().optional()
 });
@@ -201,7 +203,56 @@ oauthRouter.get('/authorize', (req, res) => {
         return res.status(400).send('Invalid redirect_uri');
     }
 
-    const { client_id, redirect_uri, state, scope, code_challenge, code_challenge_method } = parsed.data;
+    const { client_id, redirect_uri, state, scope, code_challenge, code_challenge_method, role_hint } = parsed.data;
+    const roleHintInput = role_hint ? `<input type="hidden" name="role_hint" value="${role_hint}">` : '';
+    const showPatientSection = role_hint !== 'clinician';
+    const showClinicianSection = role_hint !== 'patient';
+
+    const patientSection = `
+            <form action="/oauth/authorize-submit" method="POST">
+                <input type="hidden" name="client_id" value="${client_id}">
+                <input type="hidden" name="redirect_uri" value="${redirect_uri}">
+                <input type="hidden" name="state" value="${state}">
+                <input type="hidden" name="scope" value="${scope}">
+                <input type="hidden" name="code_challenge" value="${code_challenge}">
+                <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
+                ${roleHintInput}
+                <div class="section">
+                    <h2>Login as Patient</h2>
+                    <select name="patient_id">
+                        <option value="patient-riley">Riley Patient (Simulation)</option>
+                        <option value="patient-demo-456">Riley DemoPatient</option>
+                        <option value="patient-123">Alice TestPatient</option>
+                        <option value="patient-124">Sagar Thapa</option>
+                        <option value="patient-125">Anisha Gurung</option>
+                    </select>
+                    <button type="submit" name="role" value="patient" class="btn btn-patient">Login as Patient</button>
+                </div>
+            </form>
+    `;
+
+    const clinicianSection = `
+            <form action="/oauth/authorize-submit" method="POST">
+                <input type="hidden" name="client_id" value="${client_id}">
+                <input type="hidden" name="redirect_uri" value="${redirect_uri}">
+                <input type="hidden" name="state" value="${state}">
+                <input type="hidden" name="scope" value="${scope}">
+                <input type="hidden" name="code_challenge" value="${code_challenge}">
+                <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
+                ${roleHintInput}
+                <div class="section">
+                    <h2>Login as Clinician</h2>
+                    <select name="clinician_id">
+                        <option value="practitioner-joden">Dr. Joden Lee</option>
+                        <option value="dr-demo-456">Dr. Jordan Lee</option>
+                        <option value="practitioner-rajesh">Dr. Rajesh Shrestha</option>
+                        <option value="practitioner-sunita">Dr. Sunita Maharjan</option>
+                        <option value="practitioner-arun">Dr. Arun Rai</option>
+                    </select>
+                    <button type="submit" name="role" value="clinician" class="btn btn-clinician">Login as Clinician</button>
+                </div>
+            </form>
+    `;
 
     const html = `
     <!DOCTYPE html>
@@ -221,55 +272,16 @@ oauthRouter.get('/authorize', (req, res) => {
             .btn-clinician { background: #10b981; color: white; }
             .btn:hover { opacity: 0.9; }
             .divider { text-align: center; color: #9ca3af; margin: 1rem 0; }
+            .hint { margin: 0 0 1rem 0; font-size: 0.9rem; color: #4b5563; text-align: center; }
         </style>
     </head>
     <body>
         <div class="card">
             <h1>ZK Guardian Login</h1>
-            
-            <form action="/oauth/authorize-submit" method="POST">
-                <input type="hidden" name="client_id" value="${client_id}">
-                <input type="hidden" name="redirect_uri" value="${redirect_uri}">
-                <input type="hidden" name="state" value="${state}">
-                <input type="hidden" name="scope" value="${scope}">
-                <input type="hidden" name="code_challenge" value="${code_challenge}">
-                <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
-                
-                <div class="section">
-                    <h2>Login as Patient</h2>
-                    <select name="patient_id">
-                        <option value="patient-riley">Riley Patient (Simulation)</option>
-                        <option value="patient-demo-456">Riley DemoPatient</option>
-                        <option value="patient-123">Alice TestPatient</option>
-                        <option value="patient-124">Sagar Thapa</option>
-                        <option value="patient-125">Anisha Gurung</option>
-                    </select>
-                    <button type="submit" name="role" value="patient" class="btn btn-patient">Login as Patient</button>
-                </div>
-            </form>
-            
-            <div class="divider">— or —</div>
-            
-            <form action="/oauth/authorize-submit" method="POST">
-                <input type="hidden" name="client_id" value="${client_id}">
-                <input type="hidden" name="redirect_uri" value="${redirect_uri}">
-                <input type="hidden" name="state" value="${state}">
-                <input type="hidden" name="scope" value="${scope}">
-                <input type="hidden" name="code_challenge" value="${code_challenge}">
-                <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
-                
-                <div class="section">
-                    <h2>Login as Clinician</h2>
-                    <select name="clinician_id">
-                        <option value="practitioner-joden">Dr. Joden Lee</option>
-                        <option value="dr-demo-456">Dr. Jordan Lee</option>
-                        <option value="practitioner-rajesh">Dr. Rajesh Shrestha</option>
-                        <option value="practitioner-sunita">Dr. Sunita Maharjan</option>
-                        <option value="practitioner-arun">Dr. Arun Rai</option>
-                    </select>
-                    <button type="submit" name="role" value="clinician" class="btn btn-clinician">Login as Clinician</button>
-                </div>
-            </form>
+            ${role_hint ? `<p class="hint">Role requested from app: <strong>${role_hint}</strong></p>` : ''}
+            ${showPatientSection ? patientSection : ''}
+            ${showPatientSection && showClinicianSection ? '<div class="divider">— or —</div>' : ''}
+            ${showClinicianSection ? clinicianSection : ''}
         </div>
     </body>
     </html>
@@ -300,7 +312,11 @@ oauthRouter.post('/authorize-submit', express.urlencoded({ extended: true }), (r
         return res.status(400).send('Invalid redirect_uri');
     }
 
-    const { redirect_uri, state, role, scope, patient_id, clinician_id, client_id, code_challenge, code_challenge_method } = parsed.data;
+    const { redirect_uri, state, role, role_hint, scope, patient_id, clinician_id, client_id, code_challenge, code_challenge_method } = parsed.data;
+
+    if (role_hint && role_hint !== role) {
+        return res.status(400).send('Role mismatch with requested role_hint');
+    }
 
     const code = randomUUID();
 
@@ -316,6 +332,15 @@ oauthRouter.post('/authorize-submit', express.urlencoded({ extended: true }), (r
     };
 
     void storeAuthCode(code, authEntry);
+
+    // Development-only direct mode for deterministic mobile QA and local automation.
+    if (env.NODE_ENV !== 'production' && req.get('x-dev-direct') === 'true') {
+        return res.json({
+            code,
+            state,
+            redirect_uri
+        });
+    }
 
     try {
         const target = new URL(redirect_uri);
