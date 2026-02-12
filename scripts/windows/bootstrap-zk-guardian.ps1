@@ -429,6 +429,23 @@ function Ensure-Pnpm {
     }
 }
 
+function Enable-PnpmBuildScripts {
+    param([Parameter(Mandatory = $true)][string]$Workspace)
+
+    Write-Info "Configuring pnpm build-script policy for bootstrap compatibility..."
+    try {
+        Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm config set --location project dangerouslyAllowAllBuilds true"
+        $configValue = (& pnpm config get --location project dangerouslyAllowAllBuilds 2>$null | Out-String).Trim().ToLowerInvariant()
+        if ($configValue -ne "true") {
+            Write-WarnMsg "Could not confirm pnpm dangerouslyAllowAllBuilds=true. Dependency scripts may still be blocked."
+        } else {
+            Write-Info "pnpm build scripts are enabled for this workspace."
+        }
+    } catch {
+        Write-WarnMsg "Failed to set pnpm build-script policy: $($_.Exception.Message)"
+    }
+}
+
 function Get-NodeMajorVersion {
     if (-not (Test-CommandExists "node")) {
         return 0
@@ -732,6 +749,28 @@ function Wait-ForHttpOk {
     return $false
 }
 
+function Show-LogTail {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$Lines = 80
+    )
+
+    if (-not (Test-Path $Path)) {
+        Write-WarnMsg "Log file not found: $Path"
+        return
+    }
+
+    Write-WarnMsg "Last $Lines lines from $Path:"
+    try {
+        $tail = Get-Content -Path $Path -Tail $Lines
+        foreach ($line in $tail) {
+            Write-Host "  $line" -ForegroundColor DarkYellow
+        }
+    } catch {
+        Write-WarnMsg "Could not read log tail: $($_.Exception.Message)"
+    }
+}
+
 function Stop-ProcessOnPort {
     param([int]$Port)
     try {
@@ -780,6 +819,53 @@ function Start-LoggedBackground {
         log = $LogPath
     }
     return $proc
+}
+
+function Start-HardhatNode {
+    param(
+        [Parameter(Mandatory = $true)][string]$Workspace,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+
+    Write-Info "Validating Hardhat CLI availability..."
+    Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm --filter contracts exec hardhat --version"
+
+    Stop-ProcessOnPort -Port 8545
+
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        if ($attempt -gt 1) {
+            Write-WarnMsg "Retrying Hardhat startup (attempt $attempt/2) after dependency rebuild..."
+            try {
+                Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm rebuild --recursive"
+            } catch {
+                Write-WarnMsg "pnpm rebuild failed during retry: $($_.Exception.Message)"
+            }
+        }
+
+        Start-LoggedBackground -Name "hardhat" -WorkingDirectory $Workspace -Command "pnpm --filter contracts exec hardhat node --hostname 127.0.0.1 --port 8545" -LogPath $LogPath | Out-Null
+
+        if (Wait-ForPort -Port 8545 -TimeoutSec 120) {
+            Write-Info "Hardhat chain is up."
+            return
+        }
+
+        Write-WarnMsg "Hardhat did not start on port 8545 in attempt $attempt."
+        Show-LogTail -Path $LogPath -Lines 80
+
+        if ($script:RunState.processes.ContainsKey("hardhat")) {
+            $pid = [int]$script:RunState.processes["hardhat"].pid
+            if ($pid -gt 0) {
+                try {
+                    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+                } catch {
+                    # ignore cleanup failure
+                }
+            }
+        }
+        Stop-ProcessOnPort -Port 8545
+    }
+
+    throw "Hardhat local chain did not start on port 8545. See log: $LogPath"
 }
 
 function Ensure-DockerRunning {
@@ -1144,18 +1230,23 @@ function Start-CoreStack {
         Invoke-CmdChecked -WorkingDirectory $Workspace -Command "docker compose up -d postgres redis"
     }
 
+    Enable-PnpmBuildScripts -Workspace $Workspace
+
     Write-Info "Installing JavaScript dependencies..."
     Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm install"
+
+    try {
+        Write-Info "Rebuilding workspace dependencies to ensure native/build artifacts are ready..."
+        Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm rebuild --recursive"
+    } catch {
+        Write-WarnMsg "pnpm rebuild reported warnings: $($_.Exception.Message)"
+    }
 
     Stop-ProcessOnPort -Port 8545
     Stop-ProcessOnPort -Port 3000
 
     $hardhatLog = Join-Path $logsDir "hardhat.log"
-    Start-LoggedBackground -Name "hardhat" -WorkingDirectory $Workspace -Command "pnpm --filter contracts exec hardhat node --hostname 127.0.0.1 --port 8545" -LogPath $hardhatLog | Out-Null
-    if (-not (Wait-ForPort -Port 8545 -TimeoutSec 60)) {
-        throw "Hardhat local chain did not start on port 8545."
-    }
-    Write-Info "Hardhat chain is up."
+    Start-HardhatNode -Workspace $Workspace -LogPath $hardhatLog
 
     Write-Info "Deploying local smart contracts..."
     Invoke-CmdChecked -WorkingDirectory $Workspace -Command "pnpm --filter contracts exec hardhat run scripts/deploy-local.js --network localhost"
