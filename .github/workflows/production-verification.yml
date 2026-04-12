@@ -1,25 +1,29 @@
 name: Production Verification
 
-on:
+"on":
   push:
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
 
 env:
   NODE_VERSION: '20'
   PNPM_VERSION: '10.13.1'
-  DATABASE_URL: postgresql://zkguardian:zkguardian_test@localhost:5432/zkguardian_test
-  REDIS_URL: redis://localhost:6379
-  NODE_ENV: test
-  GATEWAY_PRIVATE_KEY: 0x0123456789012345678901234567890123456789012345678901234567890123
-  POLYGON_AMOY_RPC: https://rpc-amoy.polygon.technology
-  AUDIT_CONTRACT_ADDRESS: 0x0000000000000000000000000000000000000001
-  CREDENTIAL_REGISTRY_ADDRESS: 0x0000000000000000000000000000000000000002
-  CONSENT_REVOCATION_REGISTRY_ADDRESS: 0x0000000000000000000000000000000000000003
+  DATABASE_URL: 'postgresql://zkguardian:zkguardian_test@localhost:5432/zkguardian_test'
+  REDIS_URL: 'redis://localhost:6379'
+  NODE_ENV: 'test'
+  GATEWAY_PRIVATE_KEY: '0x0123456789012345678901234567890123456789012345678901234567890123'
+  POLYGON_AMOY_RPC: 'https://rpc-amoy.polygon.technology'
+  AUDIT_CONTRACT_ADDRESS: '0x0000000000000000000000000000000000000001'
 
 jobs:
   verify-fresh-checkout:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
 
     services:
       postgres:
