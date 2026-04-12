@@ -7,19 +7,19 @@
     "types": "dist/index.d.ts",
     "exports": {
         ".": {
+            "types": "./dist/index.d.ts",
             "import": "./dist/index.mjs",
-            "require": "./dist/index.js",
-            "types": "./dist/index.d.ts"
+            "require": "./dist/index.js"
         },
         "./circuits": {
+            "types": "./dist/circuits/index.d.ts",
             "import": "./dist/circuits/index.mjs",
-            "require": "./dist/circuits/index.js",
-            "types": "./dist/circuits/index.d.ts"
+            "require": "./dist/circuits/index.js"
         },
         "./consent": {
+            "types": "./dist/consent/index.d.ts",
             "import": "./dist/consent/index.mjs",
-            "require": "./dist/consent/index.js",
-            "types": "./dist/consent/index.d.ts"
+            "require": "./dist/consent/index.js"
         }
     },
     "files": [

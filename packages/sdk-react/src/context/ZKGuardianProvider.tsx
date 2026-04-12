@@ -36,10 +36,20 @@ export function ZKGuardianProvider({ config, children }: ZKGuardianProviderProps
 
     // Initialize SDK client
     useEffect(() => {
+        if (!config.circuitsPath) {
+            setClient(null);
+            return;
+        }
+
         try {
             const sdkClient = new ZKGuardianClient({
-                gatewayUrl: config.gatewayUrl,
-                apiKey: config.apiKey
+                circuitsPath: config.circuitsPath,
+                provider: config.provider,
+                signer: config.signer,
+                auditContractAddress: config.auditContractAddress,
+                revocationContractAddress: config.revocationContractAddress,
+                proofTimeout: config.proofTimeout,
+                debug: config.debug
             });
             setClient(sdkClient);
             setError(null);
@@ -51,7 +61,15 @@ export function ZKGuardianProvider({ config, children }: ZKGuardianProviderProps
             setError(err.message);
             console.error('[ZKGuardian] SDK initialization failed:', err);
         }
-    }, [config.gatewayUrl, config.apiKey, config.debug]);
+    }, [
+        config.auditContractAddress,
+        config.circuitsPath,
+        config.debug,
+        config.proofTimeout,
+        config.provider,
+        config.revocationContractAddress,
+        config.signer
+    ]);
 
     // WebSocket connection for real-time updates
     useEffect(() => {

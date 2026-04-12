@@ -80,7 +80,7 @@ export function useConsentRequest(): UseConsentRequestReturn {
                 setState({
                     status: 'approved',
                     requestId: data.requestId,
-                    proofHash: result.proofHash,
+                    proofHash: result.proofHash ?? null,
                     error: null
                 });
             } else if (result.status === 'denied') {
