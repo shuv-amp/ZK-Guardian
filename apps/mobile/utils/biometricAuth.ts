@@ -12,7 +12,7 @@
 
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
-import { Platform, AppState, AppStateStatus } from 'react-native';
+import { AppState, AppStateStatus } from 'react-native';
 
 // Constants
 const AUTH_SESSION_KEY = 'biometric_session';

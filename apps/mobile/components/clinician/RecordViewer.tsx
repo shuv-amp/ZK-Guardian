@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { FHIRResource } from '../../services/fhirClient';
-import Card from '../shared/Card';
 
 /**
  * RecordViewer Component

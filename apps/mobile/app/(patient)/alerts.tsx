@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -51,7 +51,7 @@ const TYPE_ICONS: Record<string, string> = {
 };
 
 export default function AlertsScreen() {
-    const { patientId, getAccessToken, logout } = useAuth();
+    const { patientId, logout } = useAuth();
     const [alerts, setAlerts] = useState<AccessAlert[]>([]);
     const [unacknowledgedCount, setUnacknowledgedCount] = useState(0);
     const [isLoading, setIsLoading] = useState(true);
@@ -59,7 +59,18 @@ export default function AlertsScreen() {
     const [filter, setFilter] = useState<'all' | 'unacknowledged'>('unacknowledged');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-    const fetchAlerts = async () => {
+    const fetchAlerts = useCallback(async () => {
+        if (!patientId) {
+            setAlerts([]);
+            setUnacknowledgedCount(0);
+            setErrorMessage('Missing patient session. Please sign in again.');
+            setIsLoading(false);
+            setRefreshing(false);
+            return;
+        }
+
+        setIsLoading(true);
+
         try {
             const acknowledged = filter === 'all' ? 'true' : 'false';
             const response = await authorizedFetch(
@@ -83,13 +94,17 @@ export default function AlertsScreen() {
             setIsLoading(false);
             setRefreshing(false);
         }
-    };
+    }, [filter, logout, patientId]);
 
     useEffect(() => {
-        fetchAlerts();
-    }, [filter]);
+        void fetchAlerts();
+    }, [fetchAlerts]);
 
-    const handleAcknowledge = async (alertId: string) => {
+    const handleAcknowledge = useCallback(async (alertId: string) => {
+        if (!patientId) {
+            return;
+        }
+
         try {
             const response = await authorizedFetch(
                 `${config.GATEWAY_URL}/api/patient/${patientId}/access-alerts/${alertId}/acknowledge`,
@@ -103,12 +118,12 @@ export default function AlertsScreen() {
             );
 
             if (response.ok) {
-                fetchAlerts();
+                void fetchAlerts();
             }
         } catch (error) {
             console.error('Failed to acknowledge alert:', error);
         }
-    };
+    }, [fetchAlerts, patientId]);
 
     const formatTime = (dateStr: string) => {
         const date = new Date(dateStr);
@@ -215,17 +230,19 @@ export default function AlertsScreen() {
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={() => {
                         setRefreshing(true);
-                        fetchAlerts();
+                        void fetchAlerts();
                     }} tintColor={COLORS.primary} />
                 }
                 ListEmptyComponent={
-                    <View style={styles.emptyState}>
-                        <Ionicons name="shield-checkmark" size={64} color={COLORS.success} />
-                        <Text style={styles.emptyText}>No alerts</Text>
-                        <Text style={styles.emptySubtext}>
-                            All access to your records appears normal.
-                        </Text>
-                    </View>
+                    !isLoading ? (
+                        <View style={styles.emptyState}>
+                            <Ionicons name="shield-checkmark" size={64} color={COLORS.success} />
+                            <Text style={styles.emptyText}>No alerts</Text>
+                            <Text style={styles.emptySubtext}>
+                                All access to your records appears normal.
+                            </Text>
+                        </View>
+                    ) : null
                 }
             />
         </SafeAreaView>

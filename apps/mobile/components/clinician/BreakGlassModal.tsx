@@ -46,7 +46,7 @@ export function BreakGlassModal({ visible, onClose, onSubmit }: BreakGlassModalP
             await onSubmit(patientId, selectedReason, justification);
             resetForm();
             onClose();
-        } catch (error) {
+        } catch {
             Alert.alert('Error', 'Failed to initiate break-glass');
         } finally {
             setIsSubmitting(false);

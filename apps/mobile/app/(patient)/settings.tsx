@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -39,7 +39,7 @@ interface Preferences {
 }
 
 export default function SettingsScreen() {
-    const { patientId, getAccessToken, logout } = useAuth();
+    const { patientId, logout } = useAuth();
 
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -55,18 +55,13 @@ export default function SettingsScreen() {
         accessHoursEnd: 19,
     });
 
-    // Fetch preferences on mount
-    useEffect(() => {
-        fetchPreferences();
-    }, []);
-
     const accessHoursLabel = useMemo(() => {
         const start = preferences.accessHoursStart.toString().padStart(2, '0');
         const end = preferences.accessHoursEnd.toString().padStart(2, '0');
         return `${start}:00 - ${end}:00`;
     }, [preferences.accessHoursStart, preferences.accessHoursEnd]);
 
-    const fetchPreferences = async () => {
+    const fetchPreferences = useCallback(async () => {
         try {
             const response = await authorizedFetch(`${config.GATEWAY_URL}/api/patient/preferences`);
             if (response.ok) {
@@ -82,9 +77,14 @@ export default function SettingsScreen() {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [logout]);
 
-    const updatePreference = async (key: keyof Preferences, value: boolean | number) => {
+    // Fetch preferences on mount
+    useEffect(() => {
+        void fetchPreferences();
+    }, [fetchPreferences]);
+
+    const updatePreference = useCallback(async (key: keyof Preferences, value: boolean | number) => {
         setPreferences(prev => ({ ...prev, [key]: value }));
         setIsSaving(true);
 
@@ -108,12 +108,12 @@ export default function SettingsScreen() {
         } catch (error) {
             console.error('Failed to save preference:', error);
             // Revert on error
-            fetchPreferences();
+            void fetchPreferences();
             Alert.alert('Error', 'Failed to save preference. Please try again.');
         } finally {
             setIsSaving(false);
         }
-    };
+    }, [fetchPreferences]);
 
     const handleLogout = () => {
         Alert.alert(

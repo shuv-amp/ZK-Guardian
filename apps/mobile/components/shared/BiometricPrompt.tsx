@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -51,43 +51,9 @@ export function BiometricPrompt({
     const [biometricType, setBiometricType] = useState<BiometricType>('none');
     const [canUseBiometrics, setCanUseBiometrics] = useState(false);
 
-    const pulseAnim = new Animated.Value(1);
+    const pulseAnim = useRef(new Animated.Value(1)).current;
 
-    // Check biometric availability
-    useEffect(() => {
-        checkBiometricAvailability();
-    }, []);
-
-    // Start authentication when modal opens
-    useEffect(() => {
-        if (visible && canUseBiometrics) {
-            authenticate();
-        }
-    }, [visible, canUseBiometrics]);
-
-    // Pulse animation
-    useEffect(() => {
-        if (isAuthenticating) {
-            Animated.loop(
-                Animated.sequence([
-                    Animated.timing(pulseAnim, {
-                        toValue: 1.2,
-                        duration: 800,
-                        useNativeDriver: true
-                    }),
-                    Animated.timing(pulseAnim, {
-                        toValue: 1,
-                        duration: 800,
-                        useNativeDriver: true
-                    })
-                ])
-            ).start();
-        } else {
-            pulseAnim.setValue(1);
-        }
-    }, [isAuthenticating]);
-
-    const checkBiometricAvailability = async () => {
+    const checkBiometricAvailability = useCallback(async () => {
         try {
             const hasHardware = await LocalAuthentication.hasHardwareAsync();
             const isEnrolled = await LocalAuthentication.isEnrolledAsync();
@@ -95,7 +61,6 @@ export function BiometricPrompt({
 
             setCanUseBiometrics(hasHardware && isEnrolled);
 
-            // Determine biometric type
             if (supportedTypes.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
                 setBiometricType('faceId');
             } else if (supportedTypes.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
@@ -105,11 +70,39 @@ export function BiometricPrompt({
             } else {
                 setBiometricType('none');
             }
-        } catch (error) {
-            console.error('[BiometricPrompt] Availability check failed:', error);
+        } catch (availabilityError) {
+            console.error('[BiometricPrompt] Availability check failed:', availabilityError);
             setCanUseBiometrics(false);
         }
-    };
+    }, []);
+
+    const authenticateWithPasscode = useCallback(async () => {
+        // This is handled by the OS when disableDeviceFallback is false
+        // This function is for custom fallback handling if needed
+        console.log('[BiometricPrompt] Attempting passcode authentication');
+    }, []);
+
+    const getErrorMessage = useCallback((authenticationError: string | undefined): string => {
+        switch (authenticationError) {
+            case 'lockout':
+                return 'Too many attempts. Please try again later.';
+            case 'lockout_permanent':
+                return 'Biometrics are disabled. Please use your device passcode to enable.';
+            case 'not_enrolled':
+                return 'No biometrics enrolled. Please set up in device settings.';
+            case 'passcode_not_set':
+                return 'Device passcode not set. Please set up in device settings.';
+            case 'system_cancel':
+                return 'Authentication was cancelled by the system.';
+            default:
+                return 'Authentication failed. Please try again.';
+        }
+    }, []);
+
+    // Check biometric availability
+    useEffect(() => {
+        void checkBiometricAvailability();
+    }, [checkBiometricAvailability]);
 
     const authenticate = useCallback(async () => {
         if (isAuthenticating) return;
@@ -154,30 +147,55 @@ export function BiometricPrompt({
         } finally {
             setIsAuthenticating(false);
         }
-    }, [isAuthenticating, title, onSuccess, onCancel, onFallback, requireConfirmation]);
+    }, [
+        authenticateWithPasscode,
+        getErrorMessage,
+        isAuthenticating,
+        onCancel,
+        onFallback,
+        onSuccess,
+        requireConfirmation,
+        title
+    ]);
 
-    const authenticateWithPasscode = async () => {
-        // This is handled by the OS when disableDeviceFallback is false
-        // This function is for custom fallback handling if needed
-        console.log('[BiometricPrompt] Attempting passcode authentication');
-    };
-
-    const getErrorMessage = (error: string | undefined): string => {
-        switch (error) {
-            case 'lockout':
-                return 'Too many attempts. Please try again later.';
-            case 'lockout_permanent':
-                return 'Biometrics are disabled. Please use your device passcode to enable.';
-            case 'not_enrolled':
-                return 'No biometrics enrolled. Please set up in device settings.';
-            case 'passcode_not_set':
-                return 'Device passcode not set. Please set up in device settings.';
-            case 'system_cancel':
-                return 'Authentication was cancelled by the system.';
-            default:
-                return 'Authentication failed. Please try again.';
+    // Start authentication when modal opens
+    useEffect(() => {
+        if (visible && canUseBiometrics) {
+            void authenticate();
         }
-    };
+    }, [authenticate, canUseBiometrics, visible]);
+
+    // Pulse animation
+    useEffect(() => {
+        if (!isAuthenticating) {
+            pulseAnim.stopAnimation();
+            pulseAnim.setValue(1);
+            return;
+        }
+
+        const animation = Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulseAnim, {
+                    toValue: 1.2,
+                    duration: 800,
+                    useNativeDriver: true
+                }),
+                Animated.timing(pulseAnim, {
+                    toValue: 1,
+                    duration: 800,
+                    useNativeDriver: true
+                })
+            ])
+        );
+
+        animation.start();
+
+        return () => {
+            animation.stop();
+            pulseAnim.stopAnimation();
+            pulseAnim.setValue(1);
+        };
+    }, [isAuthenticating, pulseAnim]);
 
     const getBiometricIcon = (): keyof typeof Ionicons.glyphMap => {
         switch (biometricType) {

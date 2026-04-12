@@ -25,86 +25,88 @@ export interface FHIRResource {
     [key: string]: any;
 }
 
-export interface FHIRBundle {
+export interface FHIRBundleEntry<T extends FHIRResource = FHIRResource> {
+    fullUrl?: string;
+    resource: T;
+    search?: {
+        mode: string;
+        score?: number;
+    };
+}
+
+export interface FHIRBundle<T extends FHIRResource = FHIRResource> {
     resourceType: 'Bundle';
     type: string;
     total?: number;
-    link?: Array<{
+    link?: {
         relation: string;
         url: string;
-    }>;
-    entry?: Array<{
-        fullUrl?: string;
-        resource: FHIRResource;
-        search?: {
-            mode: string;
-            score?: number;
-        };
-    }>;
+    }[];
+    entry?: FHIRBundleEntry<T>[];
 }
 
 export interface FHIRConsent extends FHIRResource {
     resourceType: 'Consent';
     status: 'draft' | 'proposed' | 'active' | 'rejected' | 'inactive' | 'entered-in-error';
     scope: {
-        coding: Array<{
+        coding: {
             system: string;
             code: string;
             display?: string;
-        }>;
+        }[];
     };
     patient: {
         reference: string;
     };
     dateTime?: string;
-    performer?: Array<{
+    performer?: {
         reference: string;
-    }>;
+    }[];
     provision?: {
         type?: 'deny' | 'permit';
         period?: {
             start?: string;
             end?: string;
         };
-        actor?: Array<{
+        actor?: {
             role: {
-                coding: Array<{
+                coding: {
                     system: string;
                     code: string;
-                }>;
+                }[];
             };
             reference: {
                 reference: string;
             };
-        }>;
-        class?: Array<{
+        }[];
+        class?: {
             system: string;
             code: string;
-        }>;
+        }[];
     };
 }
 
 export interface FHIRPatient extends FHIRResource {
     resourceType: 'Patient';
-    name?: Array<{
+    name?: {
         use?: string;
         family?: string;
         given?: string[];
-    }>;
+    }[];
     birthDate?: string;
     gender?: string;
 }
 
 export interface FHIROperationOutcome extends FHIRResource {
     resourceType: 'OperationOutcome';
-    issue: Array<{
+    issue: {
         severity: 'fatal' | 'error' | 'warning' | 'information';
         code: string;
         diagnostics?: string;
         details?: {
             text?: string;
         };
-    }>;
+    }[];
 }
 
 export class FHIRClientError extends Error {
@@ -240,7 +242,7 @@ export class FHIRClient {
     async search<T extends FHIRResource>(
         resourceType: string,
         params: Record<string, string | string[]>
-    ): Promise<FHIRBundle> {
+    ): Promise<FHIRBundle<T>> {
         const searchParams = new URLSearchParams();
 
         for (const [key, value] of Object.entries(params)) {
@@ -251,7 +253,7 @@ export class FHIRClient {
             }
         }
 
-        return this.request<FHIRBundle>(`/${resourceType}?${searchParams.toString()}`);
+        return this.request<FHIRBundle<T>>(`/${resourceType}?${searchParams.toString()}`);
     }
 
     // ============================================
@@ -267,7 +269,7 @@ export class FHIRClient {
             status: 'active'
         });
 
-        return (bundle.entry || []).map(entry => entry.resource as FHIRConsent);
+        return (bundle.entry || []).map(entry => entry.resource);
     }
 
     /**
@@ -390,7 +392,7 @@ export class FHIRClient {
     /**
      * Get the next page from a bundle
      */
-    async getNextPage(bundle: FHIRBundle): Promise<FHIRBundle | null> {
+    async getNextPage<T extends FHIRResource>(bundle: FHIRBundle<T>): Promise<FHIRBundle<T> | null> {
         const nextLink = bundle.link?.find(l => l.relation === 'next');
 
         if (!nextLink) {
@@ -401,7 +403,7 @@ export class FHIRClient {
         const url = new URL(nextLink.url);
         const path = url.pathname + url.search;
 
-        return this.request<FHIRBundle>(path.replace('/fhir', ''));
+        return this.request<FHIRBundle<T>>(path.replace('/fhir', ''));
     }
 
     /**
@@ -415,10 +417,10 @@ export class FHIRClient {
 
         while (bundle) {
             for (const entry of bundle.entry || []) {
-                yield entry.resource as T;
+                yield entry.resource;
             }
 
-            bundle = await this.getNextPage(bundle) as FHIRBundle;
+            bundle = await this.getNextPage(bundle);
         }
     }
 

@@ -177,7 +177,7 @@ export function useConsent(): UseConsentState {
         };
 
         doConnect();
-    }, [handleConsentRequest, handleStateChange, refreshConsents]);
+    }, [refreshConsents]);
 
     /**
      * Disconnect from WebSocket - STABLE function
@@ -221,9 +221,10 @@ export function useConsent(): UseConsentState {
             hasLoadedConsentsRef.current = false;
             // Note: The timeout is acceptable here since refreshConsents is stable
             // and the component cleanup will prevent stale updates
-            const timeoutId = setTimeout(() => refreshConsents(), 1000);
-            
-            // Store timeout for potential cleanup if needed
+            setTimeout(() => {
+                void refreshConsents();
+            }, 1000);
+
             return true;
         } catch (error) {
             console.error('[useConsent] Approve failed:', error);
