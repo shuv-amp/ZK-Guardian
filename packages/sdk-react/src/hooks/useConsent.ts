@@ -14,7 +14,7 @@ import { useZKGuardian } from '../context/ZKGuardianProvider';
 import type { ConsentState, ConsentSummary, UseConsentReturn } from '../types';
 
 export function useConsent(): UseConsentReturn {
-    const { client, config, pendingRequests, removePendingRequest } = useZKGuardian();
+    const { config, pendingRequests, removePendingRequest } = useZKGuardian();
 
     const [state, setState] = useState<ConsentState>({
         status: 'loading',
@@ -32,14 +32,8 @@ export function useConsent(): UseConsentReturn {
         }));
     }, [pendingRequests]);
 
-    // Load active consents on mount
-    useEffect(() => {
-        if (!client || !config.patientId) return;
-        refresh();
-    }, [client, config.patientId]);
-
     const refresh = useCallback(async () => {
-        if (!client || !config.patientId) return;
+        if (!config.patientId) return;
 
         setState(prev => ({ ...prev, status: 'loading', error: null }));
 
@@ -81,10 +75,16 @@ export function useConsent(): UseConsentReturn {
                 error: err.message
             }));
         }
-    }, [client, config.gatewayUrl, config.patientId, config.apiKey]);
+    }, [config.gatewayUrl, config.patientId, config.apiKey]);
+
+    // Load active consents on mount
+    useEffect(() => {
+        if (!config.patientId) return;
+        refresh();
+    }, [config.patientId, refresh]);
 
     const approve = useCallback(async (requestId: string) => {
-        if (!client || !config.patientId) {
+        if (!config.patientId) {
             throw new Error('Not initialized');
         }
 
@@ -114,10 +114,10 @@ export function useConsent(): UseConsentReturn {
 
         // Refresh consents
         await refresh();
-    }, [client, config, removePendingRequest, refresh]);
+    }, [config, removePendingRequest, refresh]);
 
     const deny = useCallback(async (requestId: string, reason?: string) => {
-        if (!client || !config.patientId) {
+        if (!config.patientId) {
             throw new Error('Not initialized');
         }
 
@@ -144,10 +144,10 @@ export function useConsent(): UseConsentReturn {
             ...prev,
             status: prev.pendingRequests.length <= 1 ? 'denied' : 'pending'
         }));
-    }, [client, config, removePendingRequest]);
+    }, [config, removePendingRequest]);
 
     const revoke = useCallback(async (consentId: string) => {
-        if (!client || !config.patientId) {
+        if (!config.patientId) {
             throw new Error('Not initialized');
         }
 
@@ -172,7 +172,7 @@ export function useConsent(): UseConsentReturn {
                 c.id === consentId ? { ...c, status: 'revoked' as const } : c
             )
         }));
-    }, [client, config]);
+    }, [config]);
 
     return { state, approve, deny, revoke, refresh };
 }

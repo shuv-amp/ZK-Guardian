@@ -2,7 +2,9 @@
  * Type definitions for @zk-guardian/react
  */
 
-export interface ZKGuardianConfig {
+import type { ZKGuardianConfig as CoreZKGuardianConfig } from '@zk-guardian/sdk';
+
+export interface ZKGuardianConfig extends Partial<CoreZKGuardianConfig> {
     /** Gateway API URL */
     gatewayUrl: string;
     /** WebSocket URL (defaults to ws://gatewayUrl/ws/consent) */
