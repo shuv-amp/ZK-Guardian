@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -54,9 +54,15 @@ export default function ProofsScreen() {
         failed: 0
     });
 
-    const fetchProofs = async () => {
+    const fetchProofs = useCallback(async () => {
         try {
-            if (!practitionerId || !accessToken) return;
+            if (!practitionerId) {
+                setProofs([]);
+                setStats({ pending: 0, queued: 0, verified: 0, failed: 0 });
+                setIsLoading(false);
+                setRefreshing(false);
+                return;
+            }
 
             const response = await authorizedFetch(
                 `${config.GATEWAY_URL}/api/clinician/${practitionerId}/proofs?limit=20`,
@@ -72,13 +78,19 @@ export default function ProofsScreen() {
             }
 
             const data = await response.json();
-            setProofs(data.proofs);
+            const proofRecords: ProofRecord[] = Array.isArray(data.proofs) ? data.proofs : [];
+            setProofs(proofRecords);
 
             // Calculate stats
-            const newStats = { pending: 0, queued: 0, verified: 0, failed: 0 };
-            data.proofs.forEach((p: ProofRecord) => {
-                if (newStats[p.status] !== undefined) {
-                    newStats[p.status]++;
+            const newStats: Record<ProofRecord['status'], number> = {
+                pending: 0,
+                queued: 0,
+                verified: 0,
+                failed: 0
+            };
+            proofRecords.forEach((proof) => {
+                if (newStats[proof.status] !== undefined) {
+                    newStats[proof.status]++;
                 }
             });
             setStats(newStats);
@@ -88,11 +100,11 @@ export default function ProofsScreen() {
             setIsLoading(false);
             setRefreshing(false);
         }
-    };
+    }, [practitionerId]);
 
     useEffect(() => {
-        fetchProofs();
-    }, []);
+        void fetchProofs();
+    }, [fetchProofs]);
 
     const formatTime = (dateStr: string) => {
         const date = new Date(dateStr);
@@ -187,7 +199,7 @@ export default function ProofsScreen() {
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={() => {
                         setRefreshing(true);
-                        fetchProofs();
+                        void fetchProofs();
                     }} />
                 }
                 ListEmptyComponent={

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -40,7 +40,7 @@ interface Consent {
 }
 
 export default function ConsentsScreen() {
-    const { patientId, getAccessToken, logout } = useAuth();
+    const { patientId, logout } = useAuth();
     const [consents, setConsents] = useState<Consent[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -53,7 +53,15 @@ export default function ConsentsScreen() {
         return 'total';
     }, [statusFilter]);
 
-    const fetchConsents = async () => {
+    const fetchConsents = useCallback(async () => {
+        if (!patientId) {
+            setConsents([]);
+            setErrorMessage('Missing patient session. Please sign in again.');
+            setIsLoading(false);
+            setRefreshing(false);
+            return;
+        }
+
         try {
             const params = new URLSearchParams();
             params.append('status', statusFilter);
@@ -74,15 +82,13 @@ export default function ConsentsScreen() {
             setIsLoading(false);
             setRefreshing(false);
         }
-    };
+    }, [logout, patientId, statusFilter]);
 
     useEffect(() => {
-        if (patientId) {
-            fetchConsents();
-        }
-    }, [patientId, statusFilter]);
+        void fetchConsents();
+    }, [fetchConsents]);
 
-    const handleRevoke = (consentId: string, clinicianName: string) => {
+    const handleRevoke = useCallback((consentId: string, clinicianName: string) => {
         Alert.alert(
             'Revoke Consent',
             `Are you sure you want to revoke access for ${clinicianName}? This action cannot be undone.`,
@@ -106,18 +112,18 @@ export default function ConsentsScreen() {
 
                             if (response.ok) {
                                 Alert.alert('Success', 'Consent has been revoked.');
-                                fetchConsents();
+                                void fetchConsents();
                             } else {
                                 Alert.alert('Error', 'Failed to revoke consent.');
                             }
-                        } catch (error) {
+                        } catch {
                             Alert.alert('Error', 'Failed to revoke consent.');
                         }
                     }
                 },
             ]
         );
-    };
+    }, [fetchConsents, patientId]);
 
     const renderConsentCard = ({ item }: { item: Consent }) => (
         <ConsentCard
@@ -194,7 +200,7 @@ export default function ConsentsScreen() {
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={() => {
                         setRefreshing(true);
-                        fetchConsents();
+                        void fetchConsents();
                     }} />
                 }
                 ListEmptyComponent={

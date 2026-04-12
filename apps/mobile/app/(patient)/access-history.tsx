@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -52,7 +52,7 @@ const PAGE_SIZE = 20;
 type FilterMode = 'all' | 'non-emergency';
 
 export default function AccessHistoryScreen() {
-    const { patientId, getAccessToken, logout } = useAuth();
+    const { patientId, logout } = useAuth();
     const [records, setRecords] = useState<AccessRecord[]>([]);
     const [summary, setSummary] = useState<AccessHistoryResponse['summary'] | null>(null);
     const [pagination, setPagination] = useState<AccessHistoryResponse['pagination'] | null>(null);
@@ -63,14 +63,6 @@ export default function AccessHistoryScreen() {
     const [filterMode, setFilterMode] = useState<FilterMode>('all');
 
     const includeBreakGlass = filterMode === 'all';
-
-    const queryString = useMemo(() => {
-        const params = new URLSearchParams();
-        params.append('limit', PAGE_SIZE.toString());
-        params.append('offset', '0');
-        params.append('includeBreakGlass', includeBreakGlass ? 'true' : 'false');
-        return params.toString();
-    }, [includeBreakGlass]);
 
     const fetchAccessHistory = useCallback(async (options?: { append?: boolean; offset?: number }) => {
         if (!patientId) {
@@ -114,8 +106,8 @@ export default function AccessHistoryScreen() {
 
     useEffect(() => {
         setIsLoading(true);
-        fetchAccessHistory();
-    }, [fetchAccessHistory, queryString]);
+        void fetchAccessHistory();
+    }, [fetchAccessHistory]);
 
     const handleRefresh = () => {
         setIsRefreshing(true);

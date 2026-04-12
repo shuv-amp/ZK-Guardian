@@ -36,7 +36,7 @@ export class ConsentHandshakeClient {
     private reconnectAttempts = 0;
     private maxReconnectAttempts = 5;
     private baseReconnectDelay = 1000; // 1 second
-    private reconnectTimer: NodeJS.Timeout | null = null;
+    private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     private onRequestCallbacks = new Set<ConsentRequestHandler>();
     private onStateChangeCallbacks = new Set<(state: ConnectionState) => void>();
@@ -96,7 +96,15 @@ export class ConsentHandshakeClient {
             return;
         }
 
-        this.socket = new WebSocket(baseUrl, undefined, {
+        const ReactNativeWebSocket = WebSocket as unknown as {
+            new (
+                url: string,
+                protocols?: string | string[],
+                options?: { headers?: Record<string, string> }
+            ): WebSocket;
+        };
+
+        this.socket = new ReactNativeWebSocket(baseUrl, undefined, {
             headers: {
                 Authorization: `Bearer ${token}`
             }

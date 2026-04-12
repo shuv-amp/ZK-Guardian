@@ -29,8 +29,8 @@ interface FHIRResource {
     meta?: {
         lastUpdated: string;
     };
-    category?: Array<{ coding: Array<{ display: string }> }>;
-    code?: { coding: Array<{ display: string }> };
+    category?: { coding: { display: string }[] }[];
+    code?: { coding: { display: string }[] };
     status?: string;
     effectiveDateTime?: string;
     valueQuantity?: { value: number; unit: string };

@@ -211,12 +211,12 @@ export class ConsentRevocationService {
         emergencyReason: string = 'Emergency revocation by patient'
     ): Promise<{
         successful: string[];
-        failed: Array<{ hash: string; error: string }>;
+        failed: { hash: string; error: string }[];
     }> {
         console.log('[ConsentRevocation] Emergency revoke-all initiated');
 
         const successful: string[] = [];
-        const failed: Array<{ hash: string; error: string }> = [];
+        const failed: { hash: string; error: string }[] = [];
 
         for (const hash of consentHashes) {
             const result = await this.revokeConsent(hash, emergencyReason);
