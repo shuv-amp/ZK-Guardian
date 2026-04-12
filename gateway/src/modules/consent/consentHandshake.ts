@@ -7,6 +7,8 @@ import { getRedis } from '../../db/redis.js';
 import { logger } from '../../lib/logger.js';
 import { env } from '../../config/env.js';
 import Redis from 'ioredis';
+import { validateSmartToken } from '../../middleware/smartAuth.js';
+import { ConsentResponseSchema } from '../../schemas/validation.js';
 
 interface ConsentResponse {
     approved: boolean;
@@ -26,8 +28,6 @@ interface SessionInfo {
     connectedAt: number;
     deviceInfo?: string;
     authenticated: boolean;
-    challenge?: string;
-    challengeExpiry?: number;
 }
 
 // Unique identifier for this gateway instance (for distributed coordination)
@@ -176,29 +176,40 @@ export class ConsentHandshakeService {
             await this.initialize();
         }
 
-        // Parse patientId from URL parameters: /ws/consent?patientId=123
-        const url = new URL(req.url || "", `http://${req.headers.host}`);
-        const patientId = url.searchParams.get("patientId");
+        const authHeader = req.headers.authorization;
+        const accessToken = authHeader?.startsWith('Bearer ')
+            ? authHeader.slice('Bearer '.length)
+            : undefined;
 
-        if (!patientId) {
-            logger.warn('WebSocket connection rejected: Missing patientId');
-            ws.close(1008, "Missing patientId");
+        if (!accessToken) {
+            logger.warn('WebSocket connection rejected: Missing bearer token');
+            ws.close(1008, 'Missing bearer token');
             return;
         }
 
-        // Generate unique session ID and authentication challenge
-        const sessionId = uuidv4();
-        const challenge = crypto.randomBytes(32).toString('hex');
-        const challengeExpiry = Date.now() + 60000; // 60 seconds to respond
+        let smartContext;
+        try {
+            smartContext = await validateSmartToken(accessToken);
+        } catch (error) {
+            ws.send(JSON.stringify({ type: 'AUTH_FAILED', reason: 'Invalid token' }));
+            ws.close(1008, 'Authentication failed');
+            return;
+        }
 
+        const patientId = smartContext.patient;
+        if (!patientId) {
+            ws.send(JSON.stringify({ type: 'AUTH_FAILED', reason: 'Patient context required' }));
+            ws.close(1008, 'Patient context required');
+            return;
+        }
+
+        const sessionId = uuidv4();
         const sessionInfo: SessionInfo = {
             patientId,
             instanceId: INSTANCE_ID,
             connectedAt: Date.now(),
             deviceInfo: req.headers['user-agent'],
-            authenticated: false,
-            challenge,
-            challengeExpiry
+            authenticated: true
         };
 
         // Store session in Redis
@@ -229,7 +240,7 @@ export class ConsentHandshakeService {
             patientId,
             sessionId,
             instanceId: INSTANCE_ID
-        }, 'Patient WebSocket connected, awaiting authentication');
+        }, 'Patient WebSocket connected');
 
         ws.on('message', (message) => this.handleMessage(patientId, sessionId, message));
 
@@ -243,12 +254,9 @@ export class ConsentHandshakeService {
             await this.cleanupSession(sessionId, patientId);
         });
 
-        // Send authentication challenge instead of immediate CONNECTED
         ws.send(JSON.stringify({
-            type: 'AUTH_CHALLENGE',
+            type: 'AUTH_SUCCESS',
             sessionId,
-            challenge,
-            expiresIn: 60000,
             timestamp: Date.now()
         }));
     }
@@ -280,12 +288,6 @@ export class ConsentHandshakeService {
         try {
             const data = JSON.parse(message.toString());
 
-            // Handle authentication response
-            if (data.type === "AUTH_RESPONSE") {
-                await this.handleAuthResponse(patientId, sessionId, data, redis);
-                return;
-            }
-
             // Check if session is authenticated for non-auth messages
             const sessionData = await redis.get(`${REDIS_SESSION_PREFIX}${sessionId}`);
             if (sessionData) {
@@ -303,13 +305,19 @@ export class ConsentHandshakeService {
 
             // Expected format: { type: "CONSENT_RESPONSE", requestId: "...", approved: true }
             if (data.type === "CONSENT_RESPONSE" && data.requestId) {
-                const request = this.pendingRequests.get(data.requestId);
+                const parsedResponse = ConsentResponseSchema.parse(data);
+                const normalizedResponse = {
+                    approved: parsedResponse.approved,
+                    nullifier: parsedResponse.nullifier,
+                    sessionNonce: parsedResponse.sessionNonce
+                };
+                const request = this.pendingRequests.get(parsedResponse.requestId);
 
                 logger.info({
-                    requestId: data.requestId,
-                    approved: data.approved,
-                    hasNullifier: !!data.nullifier,
-                    hasSessionNonce: !!data.sessionNonce,
+                    requestId: parsedResponse.requestId,
+                    approved: parsedResponse.approved,
+                    hasNullifier: !!parsedResponse.nullifier,
+                    hasSessionNonce: !!parsedResponse.sessionNonce,
                     patientId,
                     sessionId
                 }, 'Received consent response');
@@ -317,25 +325,22 @@ export class ConsentHandshakeService {
                 if (request) {
                     // Local request - resolve directly
                     clearTimeout(request.timer);
-                    request.resolve({
-                        approved: !!data.approved,
-                        nullifier: data.nullifier,
-                        sessionNonce: data.sessionNonce
-                    });
-                    this.pendingRequests.delete(data.requestId);
+                    request.resolve(normalizedResponse);
+                    this.pendingRequests.delete(parsedResponse.requestId);
                 } else {
                     // Request might be on another instance - publish response
                     try {
                         await redis.publish(REDIS_PUBSUB_CHANNEL, JSON.stringify({
                             type: 'CONSENT_RESPONSE_FORWARD',
-                            requestId: data.requestId,
-                            approved: data.approved,
+                            requestId: parsedResponse.requestId,
+                            approved: parsedResponse.approved,
+                            payload: normalizedResponse,
                             sourceInstance: INSTANCE_ID,
                             patientId
                         }));
                     } catch (e) {
                         logger.warn({
-                            requestId: data.requestId
+                            requestId: parsedResponse.requestId
                         }, 'Failed to publish consent response to pub/sub');
                     }
                 }
@@ -354,77 +359,6 @@ export class ConsentHandshakeService {
                 patientId
             }, 'Failed to parse WebSocket message');
         }
-    }
-
-    /**
-     * Handle authentication response with signed challenge
-     */
-    private async handleAuthResponse(
-        patientId: string,
-        sessionId: string,
-        data: { signature: string; publicKey?: string; timestamp?: number },
-        redis: ReturnType<typeof getRedis>
-    ): Promise<void> {
-        const ws = this.localSockets.get(sessionId);
-        if (!ws) return;
-
-        const sessionData = await redis.get(`${REDIS_SESSION_PREFIX}${sessionId}`);
-        if (!sessionData) {
-            ws.send(JSON.stringify({ type: 'AUTH_FAILED', reason: 'Session expired' }));
-            ws.close(1008, 'Session expired');
-            return;
-        }
-
-        const session: SessionInfo = JSON.parse(sessionData);
-
-        // Check challenge expiry
-        if (!session.challenge || !session.challengeExpiry || Date.now() > session.challengeExpiry) {
-            ws.send(JSON.stringify({ type: 'AUTH_FAILED', reason: 'Challenge expired' }));
-            ws.close(1008, 'Challenge expired');
-            return;
-        }
-
-        // Verify signature (using simple HMAC for now, could be ECDSA with patient's key)
-        // In production, this would verify against the patient's registered public key
-        const expectedSignature = crypto
-            .createHmac('sha256', patientId) // Simplified - use patient's key in production
-            .update(session.challenge)
-            .digest('hex');
-
-        // For production, implement proper signature verification:
-        // const verified = crypto.verify('sha256', Buffer.from(session.challenge), publicKey, Buffer.from(data.signature, 'hex'));
-
-        // In development, accept simplified signatures for testing
-        const isDevelopmentSignature = env.NODE_ENV !== 'production' &&
-            (data.signature === 'dev-bypass' || data.signature?.startsWith('dev_sig_'));
-
-        const signatureValid = data.signature === expectedSignature || isDevelopmentSignature;
-
-        if (!signatureValid) {
-            logger.warn({ patientId, sessionId }, 'WebSocket auth failed: Invalid signature');
-            ws.send(JSON.stringify({ type: 'AUTH_FAILED', reason: 'Invalid signature' }));
-            ws.close(1008, 'Authentication failed');
-            return;
-        }
-
-        // Mark session as authenticated
-        session.authenticated = true;
-        session.challenge = undefined; // Clear challenge after use
-        session.challengeExpiry = undefined;
-
-        await redis.setex(
-            `${REDIS_SESSION_PREFIX}${sessionId}`,
-            SESSION_TTL_SECONDS,
-            JSON.stringify(session)
-        );
-
-        logger.info({ patientId, sessionId }, 'WebSocket session authenticated');
-
-        ws.send(JSON.stringify({
-            type: 'AUTH_SUCCESS',
-            sessionId,
-            timestamp: Date.now()
-        }));
     }
 
     /**

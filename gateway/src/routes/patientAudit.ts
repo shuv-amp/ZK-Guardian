@@ -65,6 +65,69 @@ patientAuditRouter.get(
     async (req: Request, res: Response) => {
         try {
             const { patientId } = req.params;
+
+            // Dev-only: Synthetic Access History for "Riley"
+            if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_SYNTHETIC_CONSENT) {
+                if (patientId.toLowerCase().includes('riley')) {
+                    const now = new Date();
+                    const syntheticRecords: AccessRecord[] = [
+                        {
+                            id: 'acc-1',
+                            clinician: { id: 'dr-demo-456', displayName: 'Dr. Jordan Lee', department: 'General Practice' },
+                            resourceType: 'Encounter',
+                            accessEventHash: '0x7f83b1657ff1...9a3b',
+                            txHash: '0x3a1b...8c9d',
+                            accessTimestamp: now.toISOString(),
+                            isBreakGlass: false,
+                            isVerifiedOnChain: true
+                        },
+                        {
+                            id: 'acc-2',
+                            clinician: { id: 'dr-demo-456', displayName: 'Dr. Jordan Lee', department: 'General Practice' },
+                            resourceType: 'Observation',
+                            accessEventHash: '0x2c4d...e5f6',
+                            txHash: '0x9e8f...1a2b',
+                            accessTimestamp: new Date(now.getTime() - 5000).toISOString(),
+                            isBreakGlass: false,
+                            isVerifiedOnChain: true
+                        },
+                        {
+                            id: 'acc-3',
+                            clinician: { id: 'dr-demo-456', displayName: 'Dr. Jordan Lee', department: 'General Practice' },
+                            resourceType: 'MedicationRequest',
+                            accessEventHash: '0x5b6a...7c8d',
+                            accessTimestamp: new Date(now.getTime() - 15000).toISOString(),
+                            isBreakGlass: false,
+                            isVerifiedOnChain: false // Queued
+                        },
+                        {
+                            id: 'acc-4',
+                            clinician: { id: 'emergency-doc', displayName: 'Dr. Sarah Smith', department: 'Emergency' },
+                            resourceType: 'AllergyIntolerance',
+                            accessEventHash: '0x9999...8888',
+                            accessTimestamp: new Date(now.getTime() - 86400000).toISOString(),
+                            isBreakGlass: true,
+                            isVerifiedOnChain: true
+                        }
+                    ];
+
+                    return res.json({
+                        records: syntheticRecords,
+                        pagination: {
+                            total: 4,
+                            limit: 50,
+                            offset: 0,
+                            hasMore: false
+                        },
+                        summary: {
+                            totalAccesses: 4,
+                            uniqueClinicians: 2,
+                            breakGlassCount: 1
+                        }
+                    });
+                }
+            }
+
             const query = (req as any).validatedQuery as AccessHistoryQuery;
 
             const where: any = { patientId };

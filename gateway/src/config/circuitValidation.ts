@@ -11,8 +11,13 @@
 import { createHash } from 'crypto';
 import { readFile } from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { env } from './env.js';
 import { logger } from '../lib/logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ACCESS_CIRCUIT_DIR = path.resolve(__dirname, '../../../circuits/build/AccessIsAllowedSecure');
 
 interface CircuitValidationResult {
     valid: boolean;
@@ -38,9 +43,8 @@ export async function validateCircuitIntegrity(): Promise<CircuitValidationResul
         return result;
     }
 
-    const circuitsDir = path.resolve(process.cwd(), '..', 'circuits');
-    const wasmPath = path.join(circuitsDir, 'AccessIsAllowedSecure_js', 'AccessIsAllowedSecure.wasm');
-    const zkeyPath = path.join(circuitsDir, 'AccessIsAllowedSecure_final.zkey');
+    const wasmPath = path.join(ACCESS_CIRCUIT_DIR, 'AccessIsAllowedSecure_js', 'AccessIsAllowedSecure.wasm');
+    const zkeyPath = path.join(ACCESS_CIRCUIT_DIR, 'AccessIsAllowedSecure_final.zkey');
 
     // Validate WASM
     if (env.CIRCUIT_WASM_SHA256) {
@@ -100,9 +104,8 @@ export async function validateCircuitIntegrity(): Promise<CircuitValidationResul
  * Run this to get the hashes to put in env variables
  */
 export async function generateCircuitHashes(): Promise<{ wasm: string; zkey: string }> {
-    const circuitsDir = path.resolve(process.cwd(), '..', 'circuits');
-    const wasmPath = path.join(circuitsDir, 'AccessIsAllowedSecure_js', 'AccessIsAllowedSecure.wasm');
-    const zkeyPath = path.join(circuitsDir, 'AccessIsAllowedSecure_final.zkey');
+    const wasmPath = path.join(ACCESS_CIRCUIT_DIR, 'AccessIsAllowedSecure_js', 'AccessIsAllowedSecure.wasm');
+    const zkeyPath = path.join(ACCESS_CIRCUIT_DIR, 'AccessIsAllowedSecure_final.zkey');
 
     const wasmBuffer = await readFile(wasmPath);
     const zkeyBuffer = await readFile(zkeyPath);

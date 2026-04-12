@@ -1,0 +1,83 @@
+name: Production Verification
+
+on:
+  push:
+  pull_request:
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '10.13.1'
+  DATABASE_URL: postgresql://zkguardian:zkguardian_test@localhost:5432/zkguardian_test
+  REDIS_URL: redis://localhost:6379
+  NODE_ENV: test
+  GATEWAY_PRIVATE_KEY: 0x0123456789012345678901234567890123456789012345678901234567890123
+  POLYGON_AMOY_RPC: https://rpc-amoy.polygon.technology
+  AUDIT_CONTRACT_ADDRESS: 0x0000000000000000000000000000000000000001
+  CREDENTIAL_REGISTRY_ADDRESS: 0x0000000000000000000000000000000000000002
+  CONSENT_REVOCATION_REGISTRY_ADDRESS: 0x0000000000000000000000000000000000000003
+
+jobs:
+  verify-fresh-checkout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: zkguardian
+          POSTGRES_PASSWORD: zkguardian_test
+          POSTGRES_DB: zkguardian_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zkguardian -d zkguardian_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install Circom
+        run: |
+          curl -Ls https://github.com/iden3/circom/releases/download/v2.1.8/circom-linux-amd64 -o /usr/local/bin/circom
+          chmod +x /usr/local/bin/circom
+          circom --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply Prisma migrations
+        run: pnpm --filter gateway exec prisma migrate deploy
+
+      - name: Verify clean checkout
+        run: pnpm verify:fresh-checkout
+
+      - name: Build SDK
+        run: pnpm --filter @zk-guardian/sdk build
+
+      - name: Lint mobile app
+        run: pnpm --filter mobile lint

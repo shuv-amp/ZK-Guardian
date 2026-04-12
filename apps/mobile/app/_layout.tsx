@@ -12,7 +12,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider } from '../hooks/useAuth';
-import { ConsentModal } from '../components/ConsentModal';
+import { ConsentProvider } from '../hooks/ConsentProvider';
 import { isBackendConfigured } from '../config/env';
 import { View, Text, StyleSheet } from 'react-native';
 import { COLORS, FONTS, SPACING } from '../constants/Theme';
@@ -26,7 +26,8 @@ function ConfigurationError() {
             <Text style={styles.errorTitle}>Configuration Required</Text>
             <Text style={styles.errorText}>
                 The app is not configured to connect to the backend.
-                Please set GATEWAY_URL and WS_URL in your app configuration.
+                Production builds require `GATEWAY_URL`, `WS_URL`, and `TLS_PIN_MAP`
+                with HTTPS/WSS endpoints and matching pinned hosts.
             </Text>
         </View>
     );
@@ -60,58 +61,57 @@ export default function RootLayout() {
     return (
         <AuthProvider>
             <StatusBar style="dark" backgroundColor={COLORS.background} />
-            <Stack screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: COLORS.background },
-                animation: 'fade',
-            }}>
-                {/* Index route - handles auth-based redirects */}
-                <Stack.Screen
-                    name="index"
-                    options={{
-                        headerShown: false,
-                    }}
-                />
+            <ConsentProvider>
+                <Stack screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: COLORS.background },
+                    animation: 'fade',
+                }}>
+                    {/* Index route - handles auth-based redirects */}
+                    <Stack.Screen
+                        name="index"
+                        options={{
+                            headerShown: false,
+                        }}
+                    />
 
-                {/* OAuth callback route */}
-                <Stack.Screen
-                    name="auth"
-                    options={{
-                        headerShown: false,
-                        animation: 'none',
-                    }}
-                />
+                    {/* OAuth callback route */}
+                    <Stack.Screen
+                        name="auth"
+                        options={{
+                            headerShown: false,
+                            animation: 'none',
+                        }}
+                    />
 
-                {/* Auth screens */}
-                <Stack.Screen
-                    name="(auth)"
-                    options={{
-                        headerShown: false,
-                        gestureEnabled: false,
-                    }}
-                />
+                    {/* Auth screens */}
+                    <Stack.Screen
+                        name="(auth)"
+                        options={{
+                            headerShown: false,
+                            gestureEnabled: false,
+                        }}
+                    />
 
-                {/* Patient screens */}
-                <Stack.Screen
-                    name="(patient)"
-                    options={{
-                        headerShown: false,
-                        gestureEnabled: false,
-                    }}
-                />
+                    {/* Patient screens */}
+                    <Stack.Screen
+                        name="(patient)"
+                        options={{
+                            headerShown: false,
+                            gestureEnabled: false,
+                        }}
+                    />
 
-                {/* Clinician screens */}
-                <Stack.Screen
-                    name="(clinician)"
-                    options={{
-                        headerShown: false,
-                        gestureEnabled: false,
-                    }}
-                />
-            </Stack>
-
-            {/* Global consent request modal */}
-            <ConsentModal />
+                    {/* Clinician screens */}
+                    <Stack.Screen
+                        name="(clinician)"
+                        options={{
+                            headerShown: false,
+                            gestureEnabled: false,
+                        }}
+                    />
+                </Stack>
+            </ConsentProvider>
         </AuthProvider>
     );
 }

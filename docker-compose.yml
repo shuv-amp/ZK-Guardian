@@ -1,5 +1,5 @@
 # ZK Guardian - Docker Compose
-# Full stack deployment for development and production
+# Development baseline. Use docker-compose.prod.yml for production overrides.
 
 version: '3.8'
 
@@ -63,11 +63,6 @@ services:
     networks:
       - zk-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/fhir/metadata"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
 
   # HAPI FHIR Database (separate from app DB)
   hapi-db:
@@ -97,11 +92,18 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=development
+      - SMART_AUTH_MODE=local
+      - ALLOW_DEV_BYPASS=false
+      - ENABLE_SYNTHETIC_CONSENT=false
+      - ENABLE_BATCH_AUDIT=false
       - PORT=3000
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/zkguardian
+      - SMART_CLIENT_ID=zk-guardian-mobile
+      - SMART_REDIRECT_URIS=zkguardian://auth
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/zkguardian?sslmode=disable
       - REDIS_URL=redis://redis:6379
-      - HAPI_FHIR_URL=http://hapi-fhir:8080
+      - HAPI_FHIR_URL=http://hapi-fhir:8080/fhir
+      - CIRCUIT_ARTIFACTS_DIR=/workspace/circuits/build
       - POLYGON_AMOY_RPC=${POLYGON_AMOY_RPC:-https://rpc-amoy.polygon.technology}
       - AUDIT_CONTRACT_ADDRESS=${AUDIT_CONTRACT_ADDRESS}
       - GATEWAY_PRIVATE_KEY=${GATEWAY_PRIVATE_KEY}
@@ -113,7 +115,7 @@ services:
       redis:
         condition: service_healthy
       hapi-fhir:
-        condition: service_healthy
+        condition: service_started
     networks:
       - zk-network
     restart: unless-stopped

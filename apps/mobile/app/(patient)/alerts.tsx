@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
+import { authorizedFetch, APIError } from '../../services/API';
 
 /**
  * Alerts Screen
@@ -50,30 +51,34 @@ const TYPE_ICONS: Record<string, string> = {
 };
 
 export default function AlertsScreen() {
-    const { patientId, accessToken } = useAuth();
+    const { patientId, getAccessToken, logout } = useAuth();
     const [alerts, setAlerts] = useState<AccessAlert[]>([]);
     const [unacknowledgedCount, setUnacknowledgedCount] = useState(0);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [filter, setFilter] = useState<'all' | 'unacknowledged'>('unacknowledged');
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     const fetchAlerts = async () => {
         try {
             const acknowledged = filter === 'all' ? 'true' : 'false';
-            const response = await fetch(
+            const response = await authorizedFetch(
                 `${config.GATEWAY_URL}/api/patient/${patientId}/access-alerts?acknowledged=${acknowledged}`,
-                {
-                    headers: { 'Authorization': `Bearer ${accessToken}` },
-                }
+                {}
             );
 
             if (response.ok) {
                 const data = await response.json();
                 setAlerts(data.alerts || []);
                 setUnacknowledgedCount(data.unacknowledged || 0);
+                setErrorMessage(null);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Failed to fetch alerts:', error);
+            if (error instanceof APIError && error.status === 401) {
+                await logout();
+            }
+            setErrorMessage('Unable to load alerts. Please try again.');
         } finally {
             setIsLoading(false);
             setRefreshing(false);
@@ -86,12 +91,11 @@ export default function AlertsScreen() {
 
     const handleAcknowledge = async (alertId: string) => {
         try {
-            const response = await fetch(
+            const response = await authorizedFetch(
                 `${config.GATEWAY_URL}/api/patient/${patientId}/access-alerts/${alertId}/acknowledge`,
                 {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${accessToken}`,
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({ acknowledged: true }),
@@ -176,6 +180,13 @@ export default function AlertsScreen() {
                     </View>
                 )}
             </View>
+
+            {errorMessage && (
+                <View style={styles.errorBanner}>
+                    <Ionicons name="alert-circle" size={16} color={COLORS.surface} />
+                    <Text style={styles.errorText}>{errorMessage}</Text>
+                </View>
+            )}
 
             <View style={styles.filterRow}>
                 <TouchableOpacity
@@ -376,5 +387,20 @@ const styles = StyleSheet.create({
         color: COLORS.textSecondary,
         textAlign: 'center',
         marginTop: SPACING.sm,
+    },
+    errorBanner: {
+        marginHorizontal: SPACING.md,
+        marginTop: SPACING.sm,
+        padding: SPACING.sm,
+        borderRadius: RADIUS.md,
+        backgroundColor: COLORS.error,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: SPACING.sm,
+    },
+    errorText: {
+        color: COLORS.surface,
+        fontSize: FONTS.sizes.xs,
+        fontWeight: FONTS.weights.medium,
     },
 });

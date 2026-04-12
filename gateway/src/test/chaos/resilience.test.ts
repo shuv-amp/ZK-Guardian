@@ -13,8 +13,9 @@ import { WebSocket, WebSocketServer } from 'ws';
 // Test configuration
 const GATEWAY_URL = process.env.TEST_GATEWAY_URL || 'http://localhost:3000';
 const TEST_TIMEOUT = 30000;
+const runChaosTests = process.env.RUN_CHAOS_TESTS === 'true';
 
-describe('Chaos: System Resilience', () => {
+describe.skipIf(!runChaosTests)('Chaos: System Resilience', () => {
     let mockFhirServer: Server | null = null;
     let mockRedis: any = null;
 
@@ -253,7 +254,7 @@ describe('Chaos: System Resilience', () => {
     });
 });
 
-describe('Chaos: Recovery', () => {
+describe.skipIf(!runChaosTests)('Chaos: Recovery', () => {
     it('should recover from temporary FHIR outage', async () => {
         // Initial health check
         const before = await axios.get(`${GATEWAY_URL}/health`);

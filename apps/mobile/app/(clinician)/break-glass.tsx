@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -15,11 +15,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
+import { authorizedFetch, APIError } from '../../services/API';
+import { mapAccessErrorMessage, mapBreakGlassErrorMessage, parseGatewayError } from '../../services/gatewayError';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
+import { Buffer } from 'buffer';
+
+// Ensure Buffer is available in React Native runtime
+global.Buffer = global.Buffer || Buffer;
 
 /**
  * Break-Glass Screen (Clinician)
- * 
+ *
  * Emergency access workflow that bypasses consent for life-threatening situations.
  * All break-glass access is logged for mandatory review.
  */
@@ -49,17 +55,118 @@ const REASON_OPTIONS = [
         description: 'Suspected abuse investigation',
         reviewSLA: '72 hours'
     },
-];
+] as const;
+
+type BreakGlassReason = typeof REASON_OPTIONS[number]['key'];
+
+type ActiveSession = {
+    sessionId: string;
+    reason: string;
+    expiresAt: string;
+    remainingMinutes: number;
+    txHash?: string;
+};
 
 export default function BreakGlassScreen() {
-    const { accessToken, practitionerId } = useAuth();
+    const { practitionerId, logout } = useAuth();
     const [patientId, setPatientId] = useState('');
-    const [selectedReason, setSelectedReason] = useState<string | null>(null);
+    const [selectedReason, setSelectedReason] = useState<BreakGlassReason | null>(null);
     const [justification, setJustification] = useState('');
     const [witnessId, setWitnessId] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
+    const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
 
-    const validateForm = () => {
+    const selectedReasonLabel = useMemo(() => {
+        if (!selectedReason) return null;
+        return REASON_OPTIONS.find((option) => option.key === selectedReason)?.label || selectedReason;
+    }, [selectedReason]);
+
+    const buildPayload = useCallback((reason: BreakGlassReason) => ({
+        reason,
+        justification,
+        clinicianSignature: practitionerId || 'unknown-clinician',
+        witnessId: witnessId || undefined,
+        estimatedDuration: 60,
+        emergencyCode: 3,
+        emergencyThreshold: 2,
+    }), [justification, practitionerId, witnessId]);
+
+    const parseSession = (data: any): ActiveSession | null => {
+        const first = Array.isArray(data?.sessions) ? data.sessions[0] : null;
+        if (!first || !first.sessionId) {
+            return null;
+        }
+
+        return {
+            sessionId: String(first.sessionId),
+            reason: String(first.reason || 'UNKNOWN'),
+            expiresAt: String(first.expiresAt || new Date().toISOString()),
+            remainingMinutes: Number(first.remainingMinutes || 0),
+            txHash: typeof first.txHash === 'string' ? first.txHash : undefined,
+        };
+    };
+
+    const fetchSessionStatus = useCallback(async (targetPatientId?: string, silent = true): Promise<void> => {
+        const normalizedPatientId = (targetPatientId || patientId).trim();
+        if (!normalizedPatientId) {
+            setActiveSession(null);
+            return;
+        }
+
+        if (!silent) {
+            setIsRefreshingStatus(true);
+        }
+
+        try {
+            const response = await authorizedFetch(
+                `${config.GATEWAY_URL}/api/break-glass/${encodeURIComponent(normalizedPatientId)}/status`
+            );
+
+            if (!response.ok) {
+                setActiveSession(null);
+                const { code, message } = await parseGatewayError(response);
+                const mapped = mapBreakGlassErrorMessage(code, message);
+                if (!silent) {
+                    Alert.alert('Status unavailable', mapped);
+                }
+                return;
+            }
+
+            const data = await response.json();
+            setActiveSession(parseSession(data));
+        } catch (error: any) {
+            setActiveSession(null);
+            if (error instanceof APIError && error.status === 401) {
+                await logout();
+                return;
+            }
+
+            if (!silent) {
+                Alert.alert('Status unavailable', 'Unable to fetch active emergency session right now.');
+            }
+        } finally {
+            if (!silent) {
+                setIsRefreshingStatus(false);
+            }
+        }
+    }, [logout, patientId]);
+
+    useEffect(() => {
+        const normalizedPatientId = patientId.trim();
+        if (!normalizedPatientId) {
+            setActiveSession(null);
+            return;
+        }
+
+        const timer = setTimeout(() => {
+            void fetchSessionStatus(normalizedPatientId, true);
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [patientId, fetchSessionStatus]);
+
+    const validateForm = (): boolean => {
         if (!patientId.trim()) {
             Alert.alert('Error', 'Patient ID is required');
             return false;
@@ -68,15 +175,94 @@ export default function BreakGlassScreen() {
             Alert.alert('Error', 'Please select an emergency reason');
             return false;
         }
-        if (justification.length < 20) {
+        if (justification.trim().length < 20) {
             Alert.alert('Error', 'Justification must be at least 20 characters');
             return false;
         }
         return true;
     };
 
+    const initiateAndAccess = async (): Promise<void> => {
+        if (!selectedReason) {
+            return;
+        }
+
+        const normalizedPatientId = patientId.trim();
+        const payload = buildPayload(selectedReason);
+
+        const initiateResponse = await authorizedFetch(
+            `${config.GATEWAY_URL}/api/break-glass/${encodeURIComponent(normalizedPatientId)}`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload),
+            }
+        );
+
+        if (!initiateResponse.ok) {
+            const { code, message } = await parseGatewayError(initiateResponse);
+            const mappedMessage = mapBreakGlassErrorMessage(code, message);
+
+            if (code === 'BREAK_GLASS_ACTIVE') {
+                await fetchSessionStatus(normalizedPatientId, true);
+            }
+
+            Alert.alert('Break-glass initiation failed', mappedMessage);
+            return;
+        }
+
+        const initiateData = await initiateResponse.json();
+        setActiveSession({
+            sessionId: String(initiateData?.sessionId || ''),
+            reason: selectedReason,
+            expiresAt: String(initiateData?.expiresAt || new Date().toISOString()),
+            remainingMinutes: Math.max(
+                0,
+                Math.floor((new Date(String(initiateData?.expiresAt || Date.now())).getTime() - Date.now()) / 60000)
+            ),
+            txHash: typeof initiateData?.txHash === 'string' ? initiateData.txHash : undefined,
+        });
+
+        const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64');
+        const accessResponse = await authorizedFetch(
+            `${config.GATEWAY_URL}/fhir/Observation?patient=Patient/${encodeURIComponent(normalizedPatientId)}&_count=1`,
+            {
+                headers: {
+                    'X-Break-Glass': encodedPayload,
+                },
+            }
+        );
+
+        if (!accessResponse.ok) {
+            const { code, message } = await parseGatewayError(accessResponse);
+            const mappedMessage =
+                code && code.startsWith('BREAK_')
+                    ? mapBreakGlassErrorMessage(code, message)
+                    : mapAccessErrorMessage(code, message);
+
+            Alert.alert('Emergency access failed', mappedMessage);
+            return;
+        }
+
+        const selectedReasonObj = REASON_OPTIONS.find((reason) => reason.key === selectedReason);
+        Alert.alert(
+            'Emergency Access Granted',
+            `Break-glass session is active for patient ${normalizedPatientId}.\n\nReview SLA: ${selectedReasonObj?.reviewSLA || '24 hours'}\nSession: ${String(initiateData?.sessionId || '').slice(0, 8)}...`,
+            [{ text: 'OK' }]
+        );
+
+        setSelectedReason(null);
+        setJustification('');
+        setWitnessId('');
+        await fetchSessionStatus(normalizedPatientId, true);
+    };
+
     const handleSubmit = async () => {
-        if (!validateForm()) return;
+        if (!validateForm()) {
+            return;
+        }
 
         Alert.alert(
             'Confirm Break-Glass Access',
@@ -89,44 +275,14 @@ export default function BreakGlassScreen() {
                     onPress: async () => {
                         setIsSubmitting(true);
                         try {
-                            // Create break-glass payload
-                            const payload = {
-                                reason: selectedReason,
-                                justification,
-                                clinicianSignature: practitionerId,
-                                witnessId: witnessId || undefined,
-                            };
-
-                            const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64');
-
-                            // Make request with break-glass header
-                            const response = await fetch(
-                                `${config.GATEWAY_URL}/fhir/Patient/${patientId}/$everything`,
-                                {
-                                    headers: {
-                                        'Authorization': `Bearer ${accessToken}`,
-                                        'X-Break-Glass': encodedPayload,
-                                    },
-                                }
-                            );
-
-                            if (response.ok) {
-                                const selectedReasonObj = REASON_OPTIONS.find(r => r.key === selectedReason);
-                                Alert.alert(
-                                    'Emergency Access Granted',
-                                    `Access to patient ${patientId} has been granted.\n\nThis access will be reviewed within ${selectedReasonObj?.reviewSLA || '24 hours'}.\n\nCompliance has been notified.`,
-                                    [{ text: 'OK' }]
-                                );
-                                // Reset form
-                                setPatientId('');
-                                setSelectedReason(null);
-                                setJustification('');
-                                setWitnessId('');
+                            await initiateAndAccess();
+                        } catch (error: any) {
+                            if (error instanceof APIError && error.status === 401) {
+                                await logout();
+                                Alert.alert('Session Expired', 'Please sign in again.');
                             } else {
-                                Alert.alert('Error', 'Failed to grant emergency access');
+                                Alert.alert('Error', 'Network error. Please try again.');
                             }
-                        } catch (error) {
-                            Alert.alert('Error', 'Network error. Please try again.');
                         } finally {
                             setIsSubmitting(false);
                         }
@@ -136,8 +292,62 @@ export default function BreakGlassScreen() {
         );
     };
 
+    const handleCloseSession = async () => {
+        const normalizedPatientId = patientId.trim();
+        if (!normalizedPatientId) {
+            Alert.alert('Patient ID required', 'Enter patient ID to close emergency session.');
+            return;
+        }
+
+        Alert.alert(
+            'Close Break-Glass Session',
+            'Close the active emergency session for this patient?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Close Session',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setIsSubmitting(true);
+                        try {
+                            const response = await authorizedFetch(
+                                `${config.GATEWAY_URL}/api/break-glass/${encodeURIComponent(normalizedPatientId)}/close`,
+                                {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify({ closureNotes: 'Closed from clinician mobile app' }),
+                                }
+                            );
+
+                            if (!response.ok) {
+                                const { code, message } = await parseGatewayError(response);
+                                Alert.alert('Close failed', mapBreakGlassErrorMessage(code, message));
+                                return;
+                            }
+
+                            setActiveSession(null);
+                            Alert.alert('Session Closed', 'Emergency session has been closed successfully.');
+                            await fetchSessionStatus(normalizedPatientId, true);
+                        } catch (error: any) {
+                            if (error instanceof APIError && error.status === 401) {
+                                await logout();
+                            } else {
+                                Alert.alert('Close failed', 'Unable to close session right now.');
+                            }
+                        } finally {
+                            setIsSubmitting(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     return (
         <SafeAreaView style={styles.container}>
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 style={styles.keyboardView}
@@ -166,7 +376,45 @@ export default function BreakGlassScreen() {
                             autoCapitalize="none"
                             placeholderTextColor={COLORS.textTertiary}
                         />
+                        <TouchableOpacity
+                            style={styles.statusButton}
+                            onPress={() => fetchSessionStatus(undefined, false)}
+                            disabled={isRefreshingStatus || isSubmitting}
+                        >
+                            <Ionicons name="refresh" size={14} color={COLORS.primary} />
+                            <Text style={styles.statusButtonText}>
+                                {isRefreshingStatus ? 'Checking...' : 'Check Active Session'}
+                            </Text>
+                        </TouchableOpacity>
                     </View>
+
+                    {activeSession && (
+                        <View style={styles.activeSessionCard}>
+                            <View style={styles.activeSessionHeader}>
+                                <Ionicons name="shield-checkmark" size={18} color={COLORS.warning} />
+                                <Text style={styles.activeSessionTitle}>Active Break-Glass Session</Text>
+                            </View>
+                            <Text style={styles.activeSessionText}>Session: {activeSession.sessionId}</Text>
+                            <Text style={styles.activeSessionText}>Reason: {activeSession.reason}</Text>
+                            <Text style={styles.activeSessionText}>
+                                Expires: {new Date(activeSession.expiresAt).toLocaleString()}
+                            </Text>
+                            <Text style={styles.activeSessionText}>
+                                Remaining: {Math.max(0, activeSession.remainingMinutes)} minute(s)
+                            </Text>
+                            {activeSession.txHash && activeSession.txHash !== 'pending' && (
+                                <Text style={styles.activeSessionText}>Tx: {activeSession.txHash.slice(0, 12)}...</Text>
+                            )}
+                            <TouchableOpacity
+                                style={styles.closeButton}
+                                onPress={handleCloseSession}
+                                disabled={isSubmitting}
+                            >
+                                <Ionicons name="close-circle-outline" size={18} color={COLORS.error} />
+                                <Text style={styles.closeButtonText}>Close Emergency Session</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
 
                     {/* Emergency Reason */}
                     <View style={styles.section}>
@@ -238,7 +486,11 @@ export default function BreakGlassScreen() {
                     >
                         <Ionicons name="flash" size={20} color="#FFF" />
                         <Text style={styles.submitText}>
-                            {isSubmitting ? 'Processing...' : 'Initiate Break-Glass'}
+                            {isSubmitting
+                                ? 'Processing...'
+                                : activeSession
+                                    ? `Open New Emergency Session${selectedReasonLabel ? ` (${selectedReasonLabel})` : ''}`
+                                    : 'Initiate Break-Glass'}
                         </Text>
                     </TouchableOpacity>
 
@@ -287,7 +539,7 @@ const styles = StyleSheet.create({
     },
     warningSubtext: {
         fontSize: FONTS.sizes.sm,
-        color: '#7F1D1D', // Keep specific dark red for contrast on error bg
+        color: '#7F1D1D',
         marginTop: 4,
         lineHeight: 18,
     },
@@ -308,6 +560,62 @@ const styles = StyleSheet.create({
         padding: SPACING.md,
         fontSize: FONTS.sizes.md,
         color: COLORS.text,
+    },
+    statusButton: {
+        marginTop: SPACING.sm,
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: SPACING.sm,
+        paddingVertical: 6,
+        borderRadius: RADIUS.sm,
+        backgroundColor: COLORS.primaryLight,
+    },
+    statusButtonText: {
+        fontSize: FONTS.sizes.xs,
+        color: COLORS.primary,
+        fontWeight: FONTS.weights.medium,
+    },
+    activeSessionCard: {
+        backgroundColor: COLORS.warningBg,
+        borderWidth: 1,
+        borderColor: COLORS.warning,
+        borderRadius: RADIUS.md,
+        padding: SPACING.md,
+        marginBottom: SPACING.lg,
+    },
+    activeSessionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: SPACING.xs,
+        marginBottom: SPACING.sm,
+    },
+    activeSessionTitle: {
+        fontSize: FONTS.sizes.sm,
+        fontWeight: FONTS.weights.semibold,
+        color: '#8A5A00',
+    },
+    activeSessionText: {
+        fontSize: FONTS.sizes.xs,
+        color: COLORS.textSecondary,
+        marginTop: 2,
+    },
+    closeButton: {
+        marginTop: SPACING.sm,
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: SPACING.xs,
+        paddingHorizontal: SPACING.sm,
+        paddingVertical: 6,
+        borderRadius: RADIUS.sm,
+        backgroundColor: COLORS.errorBg,
+    },
+    closeButtonText: {
+        fontSize: FONTS.sizes.xs,
+        color: COLORS.error,
+        fontWeight: FONTS.weights.semibold,
     },
     textArea: {
         height: 100,

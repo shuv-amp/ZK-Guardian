@@ -9,13 +9,16 @@ import { Router } from 'express';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { env } from '../config/env.js';
+import { getGatewayPrivateKey, getSecretsManagerStatus } from '../config/secrets.js';
 import { prisma } from '../db/client.js';
 import { getRedis } from '../db/redis.js';
-import { logger } from '../lib/logger.js';
 import { zkProofService } from '../modules/security/zkProofService.js';
 import os from 'os';
 
 export const healthRouter: Router = Router();
+
+let cachedZkStatus: ServiceStatus | null = null;
+let cachedZkStatusAt = 0;
 
 interface HealthStatus {
     status: 'healthy' | 'degraded' | 'unhealthy';
@@ -29,6 +32,8 @@ interface HealthStatus {
         database: ServiceStatus;
         redis: ServiceStatus;
         zkProver: ServiceStatus;
+        auth: ServiceStatus;
+        secrets: ServiceStatus;
         memory: ServiceStatus;
     };
 }
@@ -62,7 +67,9 @@ healthRouter.get('/ready', async (_req, res) => {
     const health = await getHealthStatus();
 
     // Critical dependencies for readiness
-    const criticalServices = ['database', 'zkProver'] as const;
+    const criticalServices: Array<keyof HealthStatus['services']> = env.NODE_ENV === 'production'
+        ? ['database', 'zkProver', 'fhir', 'blockchain', 'auth', 'secrets']
+        : ['database', 'zkProver'];
     const allCriticalReady = criticalServices.every(
         svc => health.services[svc].status === 'connected'
     );
@@ -93,20 +100,20 @@ healthRouter.get('/live', (_req, res) => {
  * Gather health status from all dependencies
  */
 async function getHealthStatus(): Promise<HealthStatus> {
-    const startTime = Date.now();
-
     // Check all services in parallel
-    const [fhir, blockchain, database, redis, zkProver, memory] = await Promise.all([
+    const [fhir, blockchain, database, redis, zkProver, auth, secrets, memory] = await Promise.all([
         checkFhirHealth(),
         checkBlockchainHealth(),
         checkDatabaseHealth(),
         checkRedisHealth(),
         checkZkProverHealth(),
+        checkAuthHealth(),
+        checkSecretsHealth(),
         checkMemoryHealth()
     ]);
 
     // Determine overall status
-    const services = { fhir, blockchain, database, redis, zkProver, memory };
+    const services = { fhir, blockchain, database, redis, zkProver, auth, secrets, memory };
     const statuses = Object.values(services).map(s => s.status);
 
     let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
@@ -167,10 +174,10 @@ async function checkBlockchainHealth(): Promise<ServiceStatus> {
 
     try {
         const provider = new ethers.JsonRpcProvider(env.POLYGON_AMOY_RPC);
-        const [blockNumber, network] = await Promise.all([
+        const [blockNumber, network] = await withTimeout(Promise.all([
             provider.getBlockNumber(),
             provider.getNetwork()
-        ]);
+        ]), 5000);
 
         return {
             status: 'connected',
@@ -190,13 +197,114 @@ async function checkBlockchainHealth(): Promise<ServiceStatus> {
     }
 }
 
+async function checkAuthHealth(): Promise<ServiceStatus> {
+    const start = Date.now();
+
+    if (env.SMART_AUTH_MODE === 'local') {
+        return {
+            status: 'connected',
+            latency: Date.now() - start,
+            details: {
+                mode: 'local',
+                issuer: env.SMART_ISSUER || 'gateway-local'
+            }
+        };
+    }
+
+    if (!env.SMART_ISSUER || !env.SMART_JWKS_URI || !env.SMART_AUTHORIZATION_ENDPOINT || !env.SMART_TOKEN_ENDPOINT || !env.SMART_INTROSPECTION_ENDPOINT) {
+        return {
+            status: 'disconnected',
+            latency: Date.now() - start,
+            error: 'External SMART/OIDC endpoints are not fully configured'
+        };
+    }
+
+    try {
+        const response = await axios.get(env.SMART_JWKS_URI, {
+            timeout: 5000,
+            headers: { Accept: 'application/json' }
+        });
+
+        const jwkCount = Array.isArray(response.data?.keys) ? response.data.keys.length : 0;
+        const clientCredentialsConfigured = !!env.SMART_CLIENT_ID && !!env.SMART_CLIENT_SECRET;
+        const connected = response.status === 200 && jwkCount > 0 && clientCredentialsConfigured;
+
+        return {
+            status: connected ? 'connected' : 'degraded',
+            latency: Date.now() - start,
+            details: {
+                mode: 'external',
+                issuer: env.SMART_ISSUER,
+                jwksUri: env.SMART_JWKS_URI,
+                jwkCount,
+                introspectionConfigured: true,
+                clientCredentialsConfigured
+            },
+            error: clientCredentialsConfigured ? undefined : 'SMART client credentials missing for introspection'
+        };
+    } catch (error: any) {
+        return {
+            status: 'disconnected',
+            latency: Date.now() - start,
+            error: error.message
+        };
+    }
+}
+
+async function checkSecretsHealth(): Promise<ServiceStatus> {
+    const start = Date.now();
+    const managerStatus = getSecretsManagerStatus();
+
+    try {
+        const privateKey = await getGatewayPrivateKey();
+
+        return {
+            status: privateKey ? 'connected' : 'degraded',
+            latency: Date.now() - start,
+            details: {
+                backend: managerStatus.backend,
+                initialized: managerStatus.initialized
+            },
+            error: privateKey ? undefined : 'Gateway signing key missing'
+        };
+    } catch (error: any) {
+        return {
+            status: env.NODE_ENV === 'production' ? 'disconnected' : 'degraded',
+            latency: Date.now() - start,
+            details: {
+                backend: managerStatus.backend,
+                initialized: managerStatus.initialized
+            },
+            error: error.message
+        };
+    }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error('Timeout')); 
+        }, timeoutMs);
+
+        promise
+            .then((result) => {
+                clearTimeout(timer);
+                resolve(result);
+            })
+            .catch((error) => {
+                clearTimeout(timer);
+                reject(error);
+            });
+    });
+}
+
 /**
  * Check PostgreSQL database connection
  */
 async function checkDatabaseHealth(): Promise<ServiceStatus> {
     const start = Date.now();
     try {
-        await prisma.$queryRaw`SELECT 1`;
+        await withTimeout(prisma.$queryRaw`SELECT 1`, 3000);
 
         return {
             status: 'connected',
@@ -218,7 +326,7 @@ async function checkRedisHealth(): Promise<ServiceStatus> {
     const start = Date.now();
     try {
         const redis = getRedis();
-        const pong = await redis.ping();
+        const pong = await withTimeout(redis.ping(), 3000);
 
         return {
             status: pong === 'PONG' ? 'connected' : 'degraded',
@@ -241,10 +349,34 @@ async function checkRedisHealth(): Promise<ServiceStatus> {
  */
 async function checkZkProverHealth(): Promise<ServiceStatus> {
     const start = Date.now();
+
+    if (cachedZkStatus && Date.now() - cachedZkStatusAt < 60000) {
+        return cachedZkStatus;
+    }
+
+    const cachedIntegrity = zkProofService.getCachedIntegrity?.();
+    if (cachedIntegrity) {
+        const status: ServiceStatus = {
+            status: cachedIntegrity.valid ? 'connected' : 'degraded',
+            latency: Date.now() - start,
+            details: {
+                valid: cachedIntegrity.valid,
+                checksums: cachedIntegrity.checksums,
+                errors: cachedIntegrity.errors
+            },
+            error: cachedIntegrity.valid ? undefined : 'Circuit integrity check failed'
+        };
+
+        cachedZkStatus = status;
+        cachedZkStatusAt = Date.now();
+
+        return status;
+    }
+
     try {
         const integrity = await zkProofService.verifyCircuitIntegrity();
 
-        return {
+        const status: ServiceStatus = {
             status: integrity.valid ? 'connected' : 'degraded',
             latency: Date.now() - start,
             details: {
@@ -254,12 +386,22 @@ async function checkZkProverHealth(): Promise<ServiceStatus> {
             },
             error: integrity.valid ? undefined : 'Circuit integrity check failed'
         };
+
+        cachedZkStatus = status;
+        cachedZkStatusAt = Date.now();
+
+        return status;
     } catch (error: any) {
-        return {
+        const status: ServiceStatus = {
             status: 'disconnected',
             latency: Date.now() - start,
             error: error.message
         };
+
+        cachedZkStatus = status;
+        cachedZkStatusAt = Date.now();
+
+        return status;
     }
 }
 
@@ -286,4 +428,3 @@ async function checkMemoryHealth(): Promise<ServiceStatus> {
         }
     };
 }
-

@@ -5,6 +5,16 @@ import axios from 'axios';
 // Mock Axios to avoid real network calls to HAPI FHIR
 vi.mock('axios');
 
+const mockConsentCacheFindMany = vi.fn().mockResolvedValue([]);
+
+vi.mock('../../db/client.js', () => ({
+    prisma: {
+        consentCache: {
+            findMany: (...args: any[]) => mockConsentCacheFindMany(...args)
+        }
+    }
+}));
+
 // Define constants locally for the test (needed for path resolution even if mocked, though service uses internal path)
 import path from 'path';
 const CIRCUITS_BUILD_DIR = path.resolve(__dirname, "../../../circuits/build");
@@ -78,4 +88,44 @@ describe('ZKProofService Integration', () => {
         console.log("Proof generated successfully (Mocked):");
         console.log("Public Signals:", result.publicSignals);
     }, 30000);
+
+    it('should reject access when consent does not authorize the clinician', async () => {
+        const consentWithSpecificClinician = {
+            resourceType: "Consent",
+            id: "consent-actor-bound",
+            status: "active",
+            patient: { reference: "Patient/123" },
+            provision: {
+                period: {
+                    start: "2020-01-01",
+                    end: "2030-01-01"
+                },
+                class: [{ code: "Observation" }],
+                actor: [{
+                    reference: {
+                        reference: "Practitioner/practitioner-allowed"
+                    }
+                }]
+            }
+        };
+
+        (axios.get as any).mockResolvedValue({
+            data: {
+                entry: [{ resource: consentWithSpecificClinician }]
+            }
+        });
+
+        const request = {
+            patientId: "123",
+            clinicianId: "practitioner-blocked",
+            resourceId: "Observation",
+            resourceType: "Observation",
+            patientNullifier: "1234567890",
+            sessionNonce: "987654321"
+        };
+
+        await expect(zkProofService.generateAccessProof(request))
+            .rejects
+            .toThrow("CONSENT_PRACTITIONER_MISMATCH");
+    });
 });

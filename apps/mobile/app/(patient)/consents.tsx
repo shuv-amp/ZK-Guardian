@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -13,7 +13,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
-import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
+import { ConsentCard } from '../../components/patient/ConsentCard';
+import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/Theme';
+import { authorizedFetch, APIError } from '../../services/API';
 
 /**
  * Consents Screen
@@ -38,25 +40,36 @@ interface Consent {
 }
 
 export default function ConsentsScreen() {
-    const { patientId, accessToken } = useAuth();
+    const { patientId, getAccessToken, logout } = useAuth();
     const [consents, setConsents] = useState<Consent[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [statusFilter, setStatusFilter] = useState<'active' | 'revoked' | 'all'>('active');
+
+    const statusLabel = useMemo(() => {
+        if (statusFilter === 'active') return 'active';
+        if (statusFilter === 'revoked') return 'revoked';
+        return 'total';
+    }, [statusFilter]);
 
     const fetchConsents = async () => {
         try {
-            const response = await fetch(`${config.GATEWAY_URL}/api/patient/${patientId}/consents`, {
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                },
-            });
+            const params = new URLSearchParams();
+            params.append('status', statusFilter);
+            const response = await authorizedFetch(`${config.GATEWAY_URL}/api/patient/${patientId}/consents?${params.toString()}`);
 
             if (response.ok) {
                 const data = await response.json();
                 setConsents(data.consents || []);
+                setErrorMessage(null);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Failed to fetch consents:', error);
+            if (error instanceof APIError && error.status === 401) {
+                await logout();
+            }
+            setErrorMessage('Unable to load consents. Please try again.');
         } finally {
             setIsLoading(false);
             setRefreshing(false);
@@ -64,8 +77,10 @@ export default function ConsentsScreen() {
     };
 
     useEffect(() => {
-        fetchConsents();
-    }, []);
+        if (patientId) {
+            fetchConsents();
+        }
+    }, [patientId, statusFilter]);
 
     const handleRevoke = (consentId: string, clinicianName: string) => {
         Alert.alert(
@@ -78,12 +93,11 @@ export default function ConsentsScreen() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            const response = await fetch(
+                            const response = await authorizedFetch(
                                 `${config.GATEWAY_URL}/api/patient/${patientId}/consents/${consentId}/revoke`,
                                 {
                                     method: 'POST',
                                     headers: {
-                                        'Authorization': `Bearer ${accessToken}`,
                                         'Content-Type': 'application/json',
                                     },
                                     body: JSON.stringify({ revokeImmediately: true }),
@@ -105,62 +119,17 @@ export default function ConsentsScreen() {
         );
     };
 
-    const formatDate = (dateStr: string) => {
-        return new Date(dateStr).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric'
-        });
-    };
-
     const renderConsentCard = ({ item }: { item: Consent }) => (
-        <View style={styles.card}>
-            <View style={styles.cardHeader}>
-                <View style={styles.providerInfo}>
-                    <Ionicons name="person-circle" size={40} color={COLORS.primary} />
-                    <View style={styles.providerDetails}>
-                        <Text style={styles.providerName}>{item.grantedTo.name}</Text>
-                        <Text style={styles.department}>{item.grantedTo.department}</Text>
-                    </View>
-                </View>
-                <View style={[styles.statusBadge,
-                item.status === 'active' ? styles.statusActive : styles.statusInactive
-                ]}>
-                    <Text style={[styles.statusText, 
-                        item.status === 'active' ? { color: COLORS.success } : { color: COLORS.error }
-                    ]}>{item.status.toUpperCase()}</Text>
-                </View>
-            </View>
-
-            <View style={styles.categoriesRow}>
-                <Text style={styles.label}>Access to:</Text>
-                <View style={styles.categoriesList}>
-                    {item.allowedCategories.map((cat, idx) => (
-                        <View key={idx} style={styles.categoryChip}>
-                            <Text style={styles.categoryText}>{cat}</Text>
-                        </View>
-                    ))}
-                </View>
-            </View>
-
-            <View style={styles.validityRow}>
-                <Ionicons name="calendar-outline" size={16} color={COLORS.textSecondary} />
-                <Text style={styles.validityText}>
-                    Valid: {formatDate(item.validPeriod.start)} - {formatDate(item.validPeriod.end)}
-                </Text>
-            </View>
-
-            {item.status === 'active' && (
-                <TouchableOpacity
-                    style={styles.revokeButton}
-                    onPress={() => handleRevoke(item.id, item.grantedTo.name)}
-                    activeOpacity={0.7}
-                >
-                    <Ionicons name="close-circle-outline" size={20} color={COLORS.error} />
-                    <Text style={styles.revokeText}>Revoke Access</Text>
-                </TouchableOpacity>
-            )}
-        </View>
+        <ConsentCard
+            grantedTo={{
+                name: item.grantedTo.name,
+                department: item.grantedTo.department
+            }}
+            allowedCategories={item.allowedCategories}
+            validPeriod={item.validPeriod}
+            status={item.status}
+            onRevoke={item.status === 'active' ? () => handleRevoke(item.id, item.grantedTo.name) : undefined}
+        />
     );
 
     if (isLoading) {
@@ -179,9 +148,43 @@ export default function ConsentsScreen() {
             <View style={styles.header}>
                 <Text style={styles.title}>My Consents</Text>
                 <Text style={styles.subtitle}>
-                    {consents.filter(c => c.status === 'active').length} active
+                    {consents.length} {statusLabel}
                 </Text>
             </View>
+
+            <View style={styles.filterRow}>
+                <TouchableOpacity
+                    style={[styles.filterButton, statusFilter === 'active' && styles.filterActive]}
+                    onPress={() => setStatusFilter('active')}
+                >
+                    <Text style={[styles.filterText, statusFilter === 'active' && styles.filterTextActive]}>
+                        Active
+                    </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.filterButton, statusFilter === 'all' && styles.filterActive]}
+                    onPress={() => setStatusFilter('all')}
+                >
+                    <Text style={[styles.filterText, statusFilter === 'all' && styles.filterTextActive]}>
+                        All
+                    </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.filterButton, statusFilter === 'revoked' && styles.filterActive]}
+                    onPress={() => setStatusFilter('revoked')}
+                >
+                    <Text style={[styles.filterText, statusFilter === 'revoked' && styles.filterTextActive]}>
+                        Revoked
+                    </Text>
+                </TouchableOpacity>
+            </View>
+
+            {errorMessage && (
+                <View style={styles.errorBanner}>
+                    <Ionicons name="alert-circle" size={16} color={COLORS.surface} />
+                    <Text style={styles.errorText}>{errorMessage}</Text>
+                </View>
+            )}
 
             <FlatList
                 data={consents}
@@ -240,109 +243,32 @@ const styles = StyleSheet.create({
         padding: SPACING.m,
         paddingBottom: 100,
     },
-    card: {
+    filterRow: {
+        flexDirection: 'row',
+        gap: SPACING.s,
+        paddingHorizontal: SPACING.m,
+        paddingBottom: SPACING.m,
         backgroundColor: COLORS.surface,
-        borderRadius: RADIUS.l,
-        padding: SPACING.m,
-        marginBottom: SPACING.m,
-        ...SHADOWS.small,
+        borderBottomWidth: 1,
+        borderBottomColor: COLORS.border,
     },
-    cardHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        marginBottom: SPACING.m,
-    },
-    providerInfo: {
-        flexDirection: 'row',
-        alignItems: 'center',
+    filterButton: {
         flex: 1,
-    },
-    providerDetails: {
-        marginLeft: SPACING.m,
-        flex: 1,
-    },
-    providerName: {
-        fontSize: 16,
-        ...FONTS.semibold,
-        color: COLORS.text,
-    },
-    department: {
-        fontSize: 13,
-        color: COLORS.textSecondary,
-        marginTop: 2,
-        ...FONTS.regular,
-    },
-    statusBadge: {
-        paddingHorizontal: SPACING.s,
-        paddingVertical: 4,
+        paddingVertical: SPACING.s,
         borderRadius: RADIUS.full,
+        backgroundColor: COLORS.background,
+        alignItems: 'center',
     },
-    statusActive: {
-        backgroundColor: COLORS.successBg,
+    filterActive: {
+        backgroundColor: COLORS.primary,
     },
-    statusInactive: {
-        backgroundColor: COLORS.errorBg,
-    },
-    statusText: {
-        fontSize: 11,
-        ...FONTS.bold,
-    },
-    categoriesRow: {
-        marginBottom: SPACING.m,
-    },
-    label: {
+    filterText: {
         fontSize: 12,
         color: COLORS.textSecondary,
-        marginBottom: SPACING.s,
         ...FONTS.medium,
     },
-    categoriesList: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: SPACING.s,
-    },
-    categoryChip: {
-        backgroundColor: COLORS.primaryLight,
-        paddingHorizontal: SPACING.s,
-        paddingVertical: 4,
-        borderRadius: RADIUS.s,
-    },
-    categoryText: {
-        fontSize: 12,
-        color: COLORS.primary,
-        ...FONTS.medium,
-    },
-    validityRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: SPACING.s,
-        paddingTop: SPACING.m,
-        borderTopWidth: 1,
-        borderTopColor: COLORS.border,
-        marginTop: SPACING.xs,
-    },
-    validityText: {
-        fontSize: 13,
-        color: COLORS.textSecondary,
-        ...FONTS.regular,
-    },
-    revokeButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: SPACING.s,
-        marginTop: SPACING.m,
-        paddingVertical: SPACING.m,
-        borderRadius: RADIUS.m,
-        borderWidth: 1,
-        borderColor: COLORS.errorBg,
-        backgroundColor: COLORS.errorBg,
-    },
-    revokeText: {
-        fontSize: 14,
-        ...FONTS.semibold,
-        color: COLORS.error,
+    filterTextActive: {
+        color: COLORS.surface,
     },
     emptyState: {
         alignItems: 'center',
@@ -361,5 +287,20 @@ const styles = StyleSheet.create({
         marginTop: SPACING.s,
         paddingHorizontal: 40,
         ...FONTS.regular,
+    },
+    errorBanner: {
+        marginHorizontal: SPACING.m,
+        marginTop: SPACING.m,
+        padding: SPACING.s,
+        borderRadius: RADIUS.m,
+        backgroundColor: COLORS.error,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: SPACING.s,
+    },
+    errorText: {
+        color: COLORS.surface,
+        fontSize: 12,
+        ...FONTS.medium,
     },
 });

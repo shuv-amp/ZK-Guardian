@@ -1,7 +1,10 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import { Platform } from 'react-native';
+import * as Crypto from 'expo-crypto';
 import * as SecureStore from '../utils/SecureStorage';
 import { config, isBackendConfigured } from '../config/env';
+import { secureFetch } from '../utils/secureFetch';
 
 // Required for Expo AuthSession
 WebBrowser.maybeCompleteAuthSession();
@@ -25,6 +28,8 @@ interface StoredTokens {
     practitionerId?: string;
 }
 
+export type AuthRole = 'patient' | 'clinician';
+
 /**
  * SMART Auth Service
  * 
@@ -35,6 +40,96 @@ export class SMARTAuthService {
     private discoveryDocument: AuthSession.DiscoveryDocument | null = null;
     private tokens: StoredTokens | null = null;
 
+    private randomString(length = 64): string {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+        let result = '';
+        for (let i = 0; i < length; i++) {
+            result += chars[Math.floor(Math.random() * chars.length)];
+        }
+        return result;
+    }
+
+    private async createPkceChallenge(codeVerifier: string): Promise<string> {
+        const digest = await Crypto.digestStringAsync(
+            Crypto.CryptoDigestAlgorithm.SHA256,
+            codeVerifier,
+            { encoding: Crypto.CryptoEncoding.BASE64 }
+        );
+        return digest.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    }
+
+    private async directDevLogin(role: AuthRole): Promise<boolean> {
+        if (!config.ENABLE_DEV_DIRECT_LOGIN || !__DEV__) {
+            return false;
+        }
+
+        const redirectUri = AuthSession.makeRedirectUri({
+            scheme: 'zkguardian',
+            path: 'auth',
+        });
+        const state = this.randomString(24);
+        const codeVerifier = this.randomString(72);
+        const codeChallenge = await this.createPkceChallenge(codeVerifier);
+        const patientId = 'patient-riley';
+        const clinicianId = 'practitioner-rajesh';
+
+        const body = new URLSearchParams({
+            client_id: 'zk-guardian-mobile',
+            redirect_uri: redirectUri,
+            state,
+            scope: role === 'patient'
+                ? 'openid fhirUser offline_access patient/*.read launch/patient'
+                : 'openid fhirUser offline_access user/*.read launch',
+            code_challenge: codeChallenge,
+            code_challenge_method: 'S256',
+            role,
+            role_hint: role,
+            patient_id: role === 'patient' ? patientId : '',
+            clinician_id: role === 'clinician' ? clinicianId : '',
+        });
+
+        const authResponse = await secureFetch(`${config.GATEWAY_URL}/oauth/authorize-submit`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Dev-Direct': 'true',
+            },
+            body: body.toString(),
+        });
+
+        if (!authResponse.ok) {
+            const text = await authResponse.text();
+            console.warn('[SMARTAuth] Dev direct authorize failed:', authResponse.status, text);
+            return false;
+        }
+
+        const authData = await authResponse.json() as { code?: string };
+        if (!authData.code) {
+            console.warn('[SMARTAuth] Dev direct authorize missing code');
+            return false;
+        }
+
+        return this.exchangeCodeForTokens(authData.code, redirectUri, codeVerifier);
+    }
+
+    private async ensureDiscoveryDocument(): Promise<boolean> {
+        if (this.discoveryDocument) {
+            return true;
+        }
+
+        const smartConfig = await this.fetchSmartConfiguration();
+        if (!smartConfig) {
+            return false;
+        }
+
+        this.discoveryDocument = {
+            authorizationEndpoint: smartConfig.authorization_endpoint,
+            tokenEndpoint: smartConfig.token_endpoint,
+        };
+
+        return true;
+    }
+
     /**
      * Boot up.
      * Checks if we have valid tokens stashed away.
@@ -44,6 +139,8 @@ export class SMARTAuthService {
             const stored = await SecureStore.getItemAsync(TOKEN_KEY);
             if (stored) {
                 this.tokens = JSON.parse(stored);
+
+                await this.ensureDiscoveryDocument();
 
                 // Check if token is expired
                 if (this.tokens && this.tokens.expiresAt < Date.now()) {
@@ -63,23 +160,25 @@ export class SMARTAuthService {
      * Start the login flow.
      * Pops open the system browser for the user to sign in.
      */
-    async login(): Promise<boolean> {
+    async login(role: AuthRole = 'patient'): Promise<boolean> {
         if (!isBackendConfigured()) {
             console.error('[SMARTAuth] Backend not configured');
             return false;
         }
 
         try {
-            // Fetch SMART configuration from Gateway
-            const smartConfig = await this.fetchSmartConfiguration();
-            if (!smartConfig) {
+            const hasDiscovery = await this.ensureDiscoveryDocument();
+            if (!hasDiscovery) {
                 throw new Error('Failed to fetch SMART configuration');
             }
 
-            this.discoveryDocument = {
-                authorizationEndpoint: smartConfig.authorization_endpoint,
-                tokenEndpoint: smartConfig.token_endpoint,
-            };
+            if (config.ENABLE_DEV_DIRECT_LOGIN && __DEV__) {
+                const directSuccess = await this.directDevLogin(role);
+                if (directSuccess) {
+                    return true;
+                }
+                console.warn('[SMARTAuth] Dev direct login failed, falling back to browser flow');
+            }
 
             // Build auth request
             const redirectUri = AuthSession.makeRedirectUri({
@@ -92,12 +191,16 @@ export class SMARTAuthService {
                 scopes: [
                     'openid',
                     'fhirUser',
-                    'patient/*.read',
-                    'launch/patient',
+                    'offline_access',
+                    role === 'patient' ? 'patient/*.read' : 'user/*.read',
+                    role === 'patient' ? 'launch/patient' : 'launch',
                 ],
                 responseType: AuthSession.ResponseType.Code,
                 redirectUri,
                 usePKCE: true,
+                extraParams: {
+                    role_hint: role,
+                },
             });
 
             // Prompt user
@@ -122,11 +225,26 @@ export class SMARTAuthService {
             const configUrl = `${config.GATEWAY_URL}/.well-known/smart-configuration`;
             console.log(`[SMARTAuth] Fetching config from: ${configUrl}`);
 
-            const response = await fetch(configUrl);
+            const response = await secureFetch(configUrl);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status} fetching ${configUrl}`);
             }
-            return response.json();
+
+            const json = await response.json();
+
+            // FIX: If running on Android Emulator, Gateway might return 'localhost'
+            // which refers to the emulator itself. We must rewrite to 10.0.2.2.
+            if (Platform.OS === 'android') {
+                const rewrite = (url: string) => url.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
+                json.authorization_endpoint = rewrite(json.authorization_endpoint);
+                json.token_endpoint = rewrite(json.token_endpoint);
+                json.introspection_endpoint = rewrite(json.introspection_endpoint);
+                json.revocation_endpoint = rewrite(json.revocation_endpoint);
+                json.jwks_uri = rewrite(json.jwks_uri);
+                console.log('[SMARTAuth] Rewrote config URLs for Android Emulator');
+            }
+
+            return json;
         } catch (error) {
             console.error('[SMARTAuth] Failed to fetch SMART config:', error);
             return null;
@@ -153,7 +271,7 @@ export class SMARTAuthService {
 
             console.log('[SMARTAuth] Exchanging code for tokens at:', tokenUrl);
 
-            const response = await fetch(tokenUrl, {
+            const response = await secureFetch(tokenUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
@@ -204,24 +322,47 @@ export class SMARTAuthService {
      * Refreshes the access token using the refresh token.
      */
     async refreshToken(): Promise<boolean> {
-        if (!this.tokens?.refreshToken || !this.discoveryDocument) {
+        if (!this.tokens?.refreshToken) {
             console.log('[SMARTAuth] No refresh token available');
             return false;
         }
 
-        try {
-            const response = await AuthSession.refreshAsync(
-                {
-                    clientId: 'zk-guardian-mobile',
-                    refreshToken: this.tokens.refreshToken,
-                },
-                this.discoveryDocument
-            );
+        if (!this.discoveryDocument) {
+            const hasDiscovery = await this.ensureDiscoveryDocument();
+            if (!hasDiscovery) {
+                console.log('[SMARTAuth] Missing SMART discovery for refresh');
+                return false;
+            }
+        }
 
-            return this.storeTokens(response as unknown as TokenResponse);
+        try {
+            const tokenUrl = this.discoveryDocument!.tokenEndpoint!;
+            const body = new URLSearchParams({
+                grant_type: 'refresh_token',
+                refresh_token: this.tokens.refreshToken,
+                client_id: 'zk-guardian-mobile',
+            });
+
+            const response = await secureFetch(tokenUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: body.toString(),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[SMARTAuth] Refresh token request failed:', response.status, errorText);
+                return false;
+            }
+
+            const tokenResponse = await response.json();
+            return this.storeTokens(tokenResponse as TokenResponse);
         } catch (error) {
             console.error('[SMARTAuth] Token refresh failed:', error);
-            await this.logout();
+            // Do NOT auto-logout here. Fails can be network related.
+            // Let the caller verify if access token is actually expired.
             return false;
         }
     }
@@ -244,13 +385,29 @@ export class SMARTAuthService {
      */
     async getAccessToken(): Promise<string | null> {
         if (!this.tokens) {
-            return null;
+            const restored = await this.initialize();
+            if (!restored || !this.tokens) {
+                return null;
+            }
         }
 
-        // Refresh if expiring in next 5 minutes
+        // Refresh if expiring in next 5 minutes and refresh token is available
         if (this.tokens.expiresAt < Date.now() + 300000) {
-            const refreshed = await this.refreshToken();
-            if (!refreshed) {
+            if (this.tokens.refreshToken) {
+                const refreshed = await this.refreshToken();
+                if (!refreshed) {
+                    // Refresh failed. If strictly expired, we must logout.
+                    // If simply 'soon to expire', we return the current token to keep app alive.
+                    if (this.tokens.expiresAt <= Date.now()) {
+                        console.log('[SMARTAuth] Token expired and refresh failed. Logging out.');
+                        await this.logout();
+                        return null;
+                    }
+
+                    console.warn('[SMARTAuth] Refresh failed but token still valid. Continuing.');
+                }
+            } else if (this.tokens.expiresAt <= Date.now()) {
+                await this.logout();
                 return null;
             }
         }

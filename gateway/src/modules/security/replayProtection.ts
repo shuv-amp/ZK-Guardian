@@ -53,12 +53,36 @@ class ReplayProtectionService {
     ): Promise<{ isNew: boolean; existingEntry?: ProofEntry }> {
         const normalizedHash = this.normalizeHash(proofHash);
 
+        // Always persist reservation state in PostgreSQL for durability.
+        // Redis remains the fast-path lock for distributed race protection.
+        const reserveInDb = async (): Promise<{ isNew: boolean; existingEntry?: ProofEntry }> => {
+            return this.reservePostgres(normalizedHash, metadata);
+        };
+
         try {
             // Try Redis first for speed
             if (this.useRedis) {
                 const result = await this.checkRedis(normalizedHash, metadata);
                 if (result !== null) {
-                    return result;
+                    if (!result.isNew) {
+                        return result;
+                    }
+
+                    // Redis lock acquired. Persist to DB as source-of-truth.
+                    try {
+                        const dbResult = await reserveInDb();
+                        if (!dbResult.isNew) {
+                            // DB says this proof already exists; release Redis reservation.
+                            const redis = getRedis();
+                            await redis.del(PROOF_HASH_PREFIX + normalizedHash);
+                            return dbResult;
+                        }
+                        return { isNew: true };
+                    } catch (dbError) {
+                        // Keep Redis reservation when DB persistence fails.
+                        logger.warn({ error: dbError }, 'PostgreSQL reservation failed, continuing with Redis reservation only');
+                        return { isNew: true };
+                    }
                 }
             }
         } catch (error) {
@@ -67,7 +91,7 @@ class ReplayProtectionService {
         }
 
         // Fallback to PostgreSQL
-        return this.checkPostgres(normalizedHash, metadata);
+        return this.reservePostgres(normalizedHash, metadata);
     }
 
     /**
@@ -97,17 +121,27 @@ class ReplayProtectionService {
             logger.warn({ error }, 'Redis confirmation failed');
         }
 
-        // Also update PostgreSQL for durability
+        // Update PostgreSQL record for durability
         try {
-            await prisma.batchProofQueue.updateMany({
+            const now = new Date();
+            const expiry = new Date(now.getTime() + CONFIRMED_TTL_SECONDS * 1000);
+
+            await prisma.proofSubmission.upsert({
                 where: {
-                    // We don't have proofHash in BatchProofQueue schema, 
-                    // so we'd need to add it or use a separate table
+                    proofHash: normalizedHash
                 },
-                data: {
-                    status: 'verified',
+                update: {
+                    status: 'confirmed',
                     txHash,
-                    processedAt: new Date()
+                    confirmedAt: now,
+                    expiresAt: expiry
+                },
+                create: {
+                    proofHash: normalizedHash,
+                    status: 'confirmed',
+                    txHash,
+                    confirmedAt: now,
+                    expiresAt: expiry
                 }
             });
         } catch (error) {
@@ -131,6 +165,28 @@ class ReplayProtectionService {
             }
         } catch (redisError) {
             logger.warn({ error: redisError }, 'Redis cleanup failed');
+        }
+
+        try {
+            // Failed proofs can be retried later; keep short-lived metadata.
+            await prisma.proofSubmission.upsert({
+                where: {
+                    proofHash: normalizedHash
+                },
+                update: {
+                    status: 'failed',
+                    txHash: null,
+                    confirmedAt: null,
+                    expiresAt: new Date(Date.now() + PENDING_TTL_SECONDS * 1000)
+                },
+                create: {
+                    proofHash: normalizedHash,
+                    status: 'failed',
+                    expiresAt: new Date(Date.now() + PENDING_TTL_SECONDS * 1000)
+                }
+            });
+        } catch (dbError) {
+            logger.warn({ error: dbError, details: error }, 'PostgreSQL markFailed failed');
         }
     }
 
@@ -211,7 +267,7 @@ class ReplayProtectionService {
     /**
      * PostgreSQL-based check with row locking
      */
-    private async checkPostgres(
+    private async reservePostgres(
         normalizedHash: string,
         metadata: {
             accessEventHash: string;
@@ -220,57 +276,121 @@ class ReplayProtectionService {
             resourceType: string;
         }
     ): Promise<{ isNew: boolean; existingEntry?: ProofEntry }> {
-        // Check if proof exists in audit log
-        const existing = await prisma.auditLog.findFirst({
-            where: {
-                accessEventHash: metadata.accessEventHash
-            }
+        const now = new Date();
+        const pendingExpiry = new Date(now.getTime() + PENDING_TTL_SECONDS * 1000);
+
+        const existing = await prisma.proofSubmission.findUnique({
+            where: { proofHash: normalizedHash }
         });
 
-        if (existing) {
-            logger.warn({
-                proofHash: normalizedHash,
-                existingId: existing.id
-            }, 'Replay attack detected (PostgreSQL)');
-            
-            return {
-                isNew: false,
-                existingEntry: {
-                    proofHash: normalizedHash,
-                    accessEventHash: existing.accessEventHash,
-                    patientId: existing.patientId,
-                    clinicianId: existing.clinicianId,
-                    resourceType: existing.resourceType,
-                    status: 'confirmed',
-                    txHash: existing.txHash || undefined,
-                    createdAt: existing.createdAt,
-                    confirmedAt: existing.createdAt
+        if (!existing) {
+            try {
+                await prisma.proofSubmission.create({
+                    data: {
+                        proofHash: normalizedHash,
+                        patientId: metadata.patientId,
+                        clinicianId: metadata.clinicianId,
+                        resourceType: metadata.resourceType,
+                        status: 'pending',
+                        expiresAt: pendingExpiry
+                    }
+                });
+                return { isNew: true };
+            } catch (error: any) {
+                // Handle unique race gracefully
+                if (error?.code === 'P2002') {
+                    const raced = await prisma.proofSubmission.findUnique({
+                        where: { proofHash: normalizedHash }
+                    });
+                    if (raced) {
+                        return {
+                            isNew: false,
+                            existingEntry: this.mapSubmissionToEntry(raced, metadata.accessEventHash)
+                        };
+                    }
                 }
-            };
+                throw error;
+            }
         }
 
-        // No existing entry found - safe to proceed
-        return { isNew: true };
+        // Allow retry if previous submission explicitly failed or pending lease expired.
+        const isExpiredPending = existing.status === 'pending' && existing.expiresAt < now;
+        const canReuse = existing.status === 'failed' || isExpiredPending;
+
+        if (canReuse) {
+            await prisma.proofSubmission.update({
+                where: { proofHash: normalizedHash },
+                data: {
+                    patientId: metadata.patientId,
+                    clinicianId: metadata.clinicianId,
+                    resourceType: metadata.resourceType,
+                    status: 'pending',
+                    txHash: null,
+                    confirmedAt: null,
+                    expiresAt: pendingExpiry
+                }
+            });
+            return { isNew: true };
+        }
+
+        logger.warn({
+            proofHash: normalizedHash,
+            status: existing.status
+        }, 'Replay attack detected (PostgreSQL)');
+
+        return {
+            isNew: false,
+            existingEntry: this.mapSubmissionToEntry(existing, metadata.accessEventHash)
+        };
+    }
+
+    private mapSubmissionToEntry(
+        submission: {
+            proofHash: string;
+            patientId: string | null;
+            clinicianId: string | null;
+            resourceType: string | null;
+            status: string;
+            txHash: string | null;
+            createdAt: Date;
+            confirmedAt: Date | null;
+        },
+        accessEventHash: string
+    ): ProofEntry {
+        const status: ProofEntry['status'] =
+            submission.status === 'confirmed'
+                ? 'confirmed'
+                : submission.status === 'failed'
+                    ? 'failed'
+                    : 'pending';
+
+        return {
+            proofHash: submission.proofHash,
+            accessEventHash,
+            patientId: submission.patientId || 'unknown',
+            clinicianId: submission.clinicianId || 'unknown',
+            resourceType: submission.resourceType || 'unknown',
+            status,
+            txHash: submission.txHash || undefined,
+            createdAt: submission.createdAt,
+            confirmedAt: submission.confirmedAt || undefined
+        };
     }
 
     /**
      * Clean up expired pending proofs (maintenance job)
      */
     async cleanupExpired(): Promise<number> {
-        // PostgreSQL cleanup
-        const expiredTime = new Date(Date.now() - PENDING_TTL_SECONDS * 1000);
-        
-        const deleted = await prisma.batchProofQueue.deleteMany({
+        const now = new Date();
+
+        const deleted = await prisma.proofSubmission.deleteMany({
             where: {
-                status: 'pending',
-                createdAt: {
-                    lt: expiredTime
-                }
+                expiresAt: { lt: now }
             }
         });
 
         if (deleted.count > 0) {
-            logger.info({ count: deleted.count }, 'Cleaned up expired pending proofs');
+            logger.info({ count: deleted.count }, 'Cleaned up expired proof submissions');
         }
 
         return deleted.count;

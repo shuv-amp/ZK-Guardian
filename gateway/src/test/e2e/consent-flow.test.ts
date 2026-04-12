@@ -20,8 +20,9 @@ const AUDIT_CONTRACT = process.env.AUDIT_CONTRACT_ADDRESS;
 const PROOF_TIMEOUT = 30000; // 30s for proof generation
 const CONSENT_TIMEOUT = 60000; // 60s for consent handshake
 const TX_TIMEOUT = 120000; // 2min for blockchain confirmation
+const runE2ETests = process.env.RUN_E2E_TESTS === 'true';
 
-describe('E2E: Complete Consent Flow', () => {
+describe.skipIf(!runE2ETests)('E2E: Complete Consent Flow', () => {
     let provider: ethers.JsonRpcProvider;
     let testToken: string;
 

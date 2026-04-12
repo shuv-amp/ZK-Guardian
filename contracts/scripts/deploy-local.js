@@ -1,4 +1,5 @@
 const hre = require("hardhat");
+const { upgrades } = hre;
 const fs = require("fs");
 const path = require("path");
 
@@ -29,17 +30,38 @@ async function main() {
     const registryAddress = await registry.getAddress();
     console.log("ConsentRevocationRegistry deployed to:", registryAddress);
 
-    // 4. Deploy ZKGuardianAudit (linked to SecureVerifier)
+    // 4. Deploy CredentialRegistry (for Break-Glass V2)
+    const CredentialRegistry = await hre.ethers.getContractFactory("CredentialRegistry");
+    const credentialRegistry = await upgrades.deployProxy(
+        CredentialRegistry,
+        [deployer.address],
+        { initializer: "initialize", kind: "uups" }
+    );
+    await credentialRegistry.waitForDeployment();
+    const credentialRegistryAddress = await credentialRegistry.getAddress();
+    console.log("CredentialRegistry deployed to:", credentialRegistryAddress);
+
+    // 5. Deploy ZKGuardianAudit as UUPS proxy (linked to SecureVerifier)
     const Audit = await hre.ethers.getContractFactory("ZKGuardianAudit");
-    const audit = await Audit.deploy(secureVerifierAddress);
+    const audit = await upgrades.deployProxy(
+        Audit,
+        [secureVerifierAddress, deployer.address],
+        { initializer: "initialize", kind: "uups" }
+    );
     await audit.waitForDeployment();
     const auditAddress = await audit.getAddress();
-    console.log("ZKGuardianAudit deployed to:", auditAddress);
+    console.log("ZKGuardianAudit proxy deployed to:", auditAddress);
+
+    // 6. Wire Break-Glass dependencies
+    await (await audit.setBreakGlassVerifier(breakGlassVerifierAddress)).wait();
+    await (await audit.setCredentialRegistry(credentialRegistryAddress)).wait();
+    console.log("BreakGlassVerifier + CredentialRegistry linked");
 
     // Output for Gateway .env.local
     console.log("\n=== Configuration for Gateway .env.local ===");
     console.log(`AUDIT_CONTRACT_ADDRESS=${auditAddress}`);
     console.log(`CONSENT_REVOCATION_REGISTRY_ADDRESS=${registryAddress}`);
+    console.log(`CREDENTIAL_REGISTRY_ADDRESS=${credentialRegistryAddress}`);
     console.log(`POLYGON_AMOY_RPC=http://127.0.0.1:8545`);
     console.log("============================================\n");
 
@@ -47,7 +69,9 @@ async function main() {
     const config = {
         audit: auditAddress,
         registry: registryAddress,
-        verifier: secureVerifierAddress
+        verifier: secureVerifierAddress,
+        breakGlassVerifier: breakGlassVerifierAddress,
+        credentialRegistry: credentialRegistryAddress
     };
     fs.writeFileSync(path.join(__dirname, "../local-deployment.json"), JSON.stringify(config, null, 2));
 }

@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
-import { ConsentModal } from '../../components/ConsentModal';
+import { useConsentContext } from '../../hooks/ConsentProvider';
 
 /**
  * Patient Dashboard
@@ -15,10 +15,9 @@ import { ConsentModal } from '../../components/ConsentModal';
  */
 export default function PatientDashboard() {
     const { patientId, logout, connectionState } = useAuth();
+    const { pendingRequests, openConsentRequest } = useConsentContext();
     const router = useRouter();
-
-    // WebSocket connection is managed by useAuth provider
-    // The connection is established automatically when patientId is available
+    const pendingPreview = useMemo(() => pendingRequests.slice(0, 3), [pendingRequests]);
 
     const getConnectionColor = () => {
         switch (connectionState) {
@@ -36,6 +35,10 @@ export default function PatientDashboard() {
             case 'error': return 'Connection Error';
             default: return 'Disconnected';
         }
+    };
+
+    const handleReviewRequest = (requestId: string) => {
+        openConsentRequest(requestId);
     };
 
     return (
@@ -73,7 +76,7 @@ export default function PatientDashboard() {
                         <TouchableOpacity
                             style={styles.actionCard}
                             activeOpacity={0.7}
-                            onPress={() => router.push('/(patient)/alerts')}
+                            onPress={() => router.push('/(patient)/access-history')}
                         >
                             <View style={[styles.actionIcon, { backgroundColor: COLORS.primaryLight }]}>
                                 <Ionicons name="time-outline" size={24} color={COLORS.primary} />
@@ -113,6 +116,48 @@ export default function PatientDashboard() {
                     </View>
                 </View>
 
+                {pendingRequests.length > 0 && (
+                    <View style={styles.section}>
+                        <Text style={styles.sectionTitle}>Pending Requests</Text>
+                        <View style={styles.pendingCard}>
+                            <View style={styles.pendingHeader}>
+                                <Text style={styles.pendingTitle}>Consent Needed</Text>
+                                <View style={styles.pendingCountBadge}>
+                                    <Text style={styles.pendingCountText}>{pendingRequests.length}</Text>
+                                </View>
+                            </View>
+                            <View style={styles.pendingList}>
+                                {pendingPreview.map((request) => (
+                                    <View key={request.requestId} style={styles.pendingRow}>
+                                        <View style={styles.pendingRowIcon}>
+                                            <Ionicons name="person-circle" size={24} color={COLORS.primary} />
+                                        </View>
+                                        <View style={styles.pendingRowContent}>
+                                            <Text style={styles.pendingRowTitle}>
+                                                {request.clinicianName || request.details.practitioner}
+                                            </Text>
+                                            <Text style={styles.pendingRowSubtitle}>
+                                                {request.resourceTypes?.[0] || request.details.resourceType}
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity
+                                            style={styles.pendingRowButton}
+                                            onPress={() => handleReviewRequest(request.requestId)}
+                                        >
+                                            <Text style={styles.pendingRowButtonText}>Review</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                ))}
+                            </View>
+                            {pendingRequests.length > 3 && (
+                                <Text style={styles.pendingFooterText}>
+                                    {pendingRequests.length - 3} more pending request(s)
+                                </Text>
+                            )}
+                        </View>
+                    </View>
+                )}
+
                 {/* Privacy Shield */}
                 <View style={styles.privacySection}>
                     <View style={styles.privacyIconContainer}>
@@ -128,8 +173,6 @@ export default function PatientDashboard() {
                 </View>
             </ScrollView>
 
-            {/* Real-time Consent Popup */}
-            <ConsentModal />
         </SafeAreaView>
     );
 }
@@ -260,6 +303,81 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: COLORS.textSecondary,
         lineHeight: 18,
+        ...FONTS.regular,
+    },
+    pendingCard: {
+        backgroundColor: COLORS.surface,
+        borderRadius: RADIUS.l,
+        padding: SPACING.l,
+        ...SHADOWS.small,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    pendingHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: SPACING.m,
+    },
+    pendingTitle: {
+        fontSize: 16,
+        ...FONTS.semibold,
+        color: COLORS.text,
+    },
+    pendingCountBadge: {
+        backgroundColor: COLORS.warningBg,
+        paddingHorizontal: SPACING.s,
+        paddingVertical: 2,
+        borderRadius: RADIUS.full,
+    },
+    pendingCountText: {
+        fontSize: 12,
+        ...FONTS.semibold,
+        color: COLORS.warning,
+    },
+    pendingList: {
+        gap: SPACING.s,
+    },
+    pendingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: SPACING.s,
+        borderRadius: RADIUS.m,
+        backgroundColor: COLORS.background,
+    },
+    pendingRowIcon: {
+        marginRight: SPACING.s,
+    },
+    pendingRowContent: {
+        flex: 1,
+    },
+    pendingRowTitle: {
+        fontSize: 14,
+        ...FONTS.medium,
+        color: COLORS.text,
+    },
+    pendingRowSubtitle: {
+        fontSize: 12,
+        color: COLORS.textSecondary,
+        marginTop: 2,
+        ...FONTS.regular,
+    },
+    pendingRowButton: {
+        backgroundColor: COLORS.primary,
+        paddingHorizontal: SPACING.m,
+        paddingVertical: 6,
+        borderRadius: RADIUS.full,
+    },
+    pendingRowButtonText: {
+        fontSize: 12,
+        ...FONTS.semibold,
+        color: COLORS.surface,
+    },
+    pendingFooterText: {
+        marginTop: SPACING.s,
+        fontSize: 12,
+        color: COLORS.textSecondary,
+        textAlign: 'center',
         ...FONTS.regular,
     },
 });

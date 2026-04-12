@@ -4,6 +4,7 @@ import { prisma } from '../db/client.js';
 import { logger, logAccessEvent, logSecurityEvent } from '../lib/logger.js';
 import { BreakGlassPayloadSchema, validateOrThrow, ValidationError } from '../schemas/validation.js';
 import { BreakGlassInvalidError } from '../lib/errors.js';
+import { env } from '../config/env.js';
 
 /**
  * Break-Glass Emergency Access Middleware
@@ -44,6 +45,25 @@ export async function breakGlassMiddleware(
         return next();
     }
 
+    // Dev mode simple bypass for E2E tests (must be explicitly enabled).
+    if (env.NODE_ENV !== 'production' && env.ALLOW_DEV_BYPASS && breakGlassHeader === 'true') {
+        const patientId = extractPatientId(req) || 'unknown';
+        const resourceType = extractResourceType(req);
+
+        // Mock context
+        (req as any).breakGlassContext = {
+            isBreakGlass: true,
+            reason: 'DEV_TEST',
+            justificationHash: 'mock-hash',
+            clinicianId: 'dev-user',
+            eventId: 'dev-event-' + Date.now(),
+            reviewDeadline: new Date()
+        };
+
+        logger.info({ patientId, resourceType }, 'Dev mode break-glass simple bypass active');
+        return next();
+    }
+
     try {
         // Decode and validate payload
         const decoded = Buffer.from(breakGlassHeader as string, 'base64').toString('utf-8');
@@ -56,11 +76,44 @@ export async function breakGlassMiddleware(
             throw new BreakGlassInvalidError('Authentication required for break-glass');
         }
 
+        if (!smartContext.practitioner) {
+            throw new BreakGlassInvalidError('Break-glass requires authenticated practitioner context');
+        }
+
         // Extract patient ID from request
         const patientId = extractPatientId(req);
         if (!patientId) {
             throw new BreakGlassInvalidError('Patient ID required for break-glass');
         }
+
+        // Enforce active break-glass session created via /api/break-glass/:patientId.
+        const activeSession = await prisma.breakGlassSession.findFirst({
+            where: {
+                patientId,
+                clinicianId: smartContext.practitioner,
+                status: 'ACTIVE',
+                expiresAt: { gt: new Date() }
+            }
+        });
+
+        if (!activeSession) {
+            throw new BreakGlassInvalidError('No active break-glass session. Initiate break-glass first.');
+        }
+
+        if (activeSession.reason !== payload.reason) {
+            throw new BreakGlassInvalidError('Break-glass reason mismatch with active session.');
+        }
+
+        // Track each accessed resource under the active emergency session.
+        const accessedResource = `${extractResourceType(req)}:${req.path}`;
+        await prisma.breakGlassSession.update({
+            where: { id: activeSession.id },
+            data: {
+                accessedResources: {
+                    push: accessedResource
+                }
+            }
+        });
 
         // Calculate review deadline based on reason
         const reviewHours = REVIEW_SLAS[payload.reason] || 24;
@@ -141,6 +194,7 @@ export async function breakGlassMiddleware(
 
         // Set response headers
         res.setHeader('X-Break-Glass-Event-Id', breakGlassEvent.id);
+        res.setHeader('X-Break-Glass-Session-Id', activeSession.id);
         res.setHeader('X-Break-Glass-Review-Deadline', reviewDeadline.toISOString());
 
         logger.info({
@@ -180,22 +234,26 @@ export async function breakGlassMiddleware(
 
 function extractPatientId(req: Request): string | null {
     // Check URL params
-    if (req.params.patientId) return req.params.patientId;
-    if (req.params.id && req.path.includes('Patient')) return req.params.id;
+    if (req.params.patientId) return normalizePatientId(req.params.patientId);
+    if (req.params.id && req.path.includes('Patient')) return normalizePatientId(req.params.id);
 
     // Check query params
-    if (req.query.patient) return req.query.patient as string;
-    if (req.query.subject) return (req.query.subject as string).replace('Patient/', '');
+    if (req.query.patient) return normalizePatientId(req.query.patient as string);
+    if (req.query.subject) return normalizePatientId(req.query.subject as string);
 
     // Check body
-    if (req.body?.patientId) return req.body.patientId;
+    if (req.body?.patientId) return normalizePatientId(req.body.patientId);
 
     // Manual path extraction (Critical for middleware)
     // Matches /Patient/123 or /Patient/123/...
     const match = req.path.match(/\/Patient\/([^/]+)/);
-    if (match) return match[1];
+    if (match) return normalizePatientId(match[1]);
 
     return null;
+}
+
+function normalizePatientId(value: string): string {
+    return String(value).replace(/^Patient\//i, '').trim();
 }
 
 function extractResourceType(req: Request): string {

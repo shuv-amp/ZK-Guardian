@@ -3,6 +3,9 @@ import { config, isBackendConfigured } from '../config/env';
 import { NullifierManager } from './NullifierManager';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
+import * as SecureStorage from '../utils/SecureStorage';
+
+const TOKEN_KEY = 'zk_guardian_tokens';
 
 type ConsentRequest = {
     type: 'CONSENT_REQUEST';
@@ -35,8 +38,8 @@ export class ConsentHandshakeClient {
     private baseReconnectDelay = 1000; // 1 second
     private reconnectTimer: NodeJS.Timeout | null = null;
 
-    private onRequestCallback: ConsentRequestHandler | null = null;
-    private onStateChangeCallback: ((state: ConnectionState) => void) | null = null;
+    private onRequestCallbacks = new Set<ConsentRequestHandler>();
+    private onStateChangeCallbacks = new Set<(state: ConnectionState) => void>();
 
     /**
      * Connects to the Gateway.
@@ -71,33 +74,13 @@ export class ConsentHandshakeClient {
         }
 
         this.updateState('connecting');
-        const wsUrl = `${config.WS_URL}?patientId=${encodeURIComponent(this.patientId)}`;
+
+        const wsUrl = config.WS_URL;
 
         console.log('[ConsentClient] Connecting to:', wsUrl);
 
         try {
-            this.socket = new WebSocket(wsUrl);
-
-            this.socket.onopen = () => {
-                console.log('[ConsentClient] Connected');
-                this.updateState('connected');
-                this.reconnectAttempts = 0;
-            };
-
-            this.socket.onmessage = (event) => {
-                this.handleMessage(event.data);
-            };
-
-            this.socket.onclose = (event) => {
-                console.log('[ConsentClient] Disconnected:', event.code, event.reason);
-                this.updateState('disconnected');
-                this.scheduleReconnect();
-            };
-
-            this.socket.onerror = (error) => {
-                console.error('[ConsentClient] WebSocket error:', error);
-                this.updateState('error');
-            };
+            void this.attachSocket(wsUrl);
         } catch (error) {
             console.error('[ConsentClient] Failed to create WebSocket:', error);
             this.updateState('error');
@@ -105,15 +88,73 @@ export class ConsentHandshakeClient {
         }
     }
 
-    private handleMessage(data: string) {
+    private async attachSocket(baseUrl: string) {
+        const token = await this.getStoredAccessToken();
+        if (!token) {
+            console.warn('[ConsentClient] Missing access token for WebSocket auth');
+            this.updateState('error');
+            return;
+        }
+
+        this.socket = new WebSocket(baseUrl, undefined, {
+            headers: {
+                Authorization: `Bearer ${token}`
+            }
+        });
+
+        this.socket.onopen = () => {
+            console.log('[ConsentClient] Connected');
+            this.updateState('connected');
+            this.reconnectAttempts = 0;
+        };
+
+        this.socket.onmessage = (event) => {
+            void this.handleMessage(event.data);
+        };
+
+        this.socket.onclose = (event) => {
+            console.log('[ConsentClient] Disconnected:', event.code, event.reason);
+            this.updateState('disconnected');
+            this.scheduleReconnect();
+        };
+
+        this.socket.onerror = (error) => {
+            console.error('[ConsentClient] WebSocket error:', error);
+            this.updateState('error');
+        };
+    }
+
+    private async getStoredAccessToken(): Promise<string | null> {
+        try {
+            const stored = await SecureStorage.getItemAsync(TOKEN_KEY);
+            if (!stored) return null;
+
+            const parsed = JSON.parse(stored) as { accessToken?: string; expiresAt?: number };
+            if (!parsed.accessToken) return null;
+            if (parsed.expiresAt && parsed.expiresAt < Date.now()) return null;
+
+            return parsed.accessToken;
+        } catch (error) {
+            console.warn('[ConsentClient] Failed to read access token from storage:', error);
+            return null;
+        }
+    }
+
+    private async clearStoredAccessToken(): Promise<void> {
+        try {
+            await SecureStorage.deleteItemAsync(TOKEN_KEY);
+        } catch (error) {
+            console.warn('[ConsentClient] Failed to clear stored access token:', error);
+        }
+    }
+
+    private async handleMessage(data: string) {
         try {
             const message = JSON.parse(data);
 
             switch (message.type) {
                 case 'AUTH_CHALLENGE':
-                    // Gateway is asking us to authenticate
-                    console.log('[ConsentClient] Received AUTH_CHALLENGE');
-                    this.handleAuthChallenge(message.challenge);
+                    console.warn('[ConsentClient] AUTH_CHALLENGE no longer supported');
                     break;
 
                 case 'AUTH_SUCCESS':
@@ -123,15 +164,17 @@ export class ConsentHandshakeClient {
 
                 case 'AUTH_REQUIRED':
                     console.warn('[ConsentClient] Auth required:', message.message);
-                    // Re-trigger authentication
-                    if (message.challenge) {
-                        this.handleAuthChallenge(message.challenge);
-                    }
+                    this.updateState('error');
+                    break;
+
+                case 'AUTH_FAILED':
+                    console.warn('[ConsentClient] Authentication failed:', message.reason);
+                    await this.clearStoredAccessToken();
                     break;
 
                 case 'CONSENT_REQUEST':
                     console.log('[ConsentClient] Received consent request:', message.requestId);
-                    this.onRequestCallback?.(message);
+                    this.onRequestCallbacks.forEach(callback => callback(message));
                     break;
 
                 default:
@@ -140,56 +183,6 @@ export class ConsentHandshakeClient {
         } catch (error) {
             console.error('[ConsentClient] Failed to parse message:', error);
         }
-    }
-
-    /**
-     * Challenge Accepted!
-     * The gateway wants proof we are who we say we are.
-     * In prod, we'd sign this with a real private key. For now, a hash will do.
-     */
-    private async handleAuthChallenge(challenge: string) {
-        try {
-            // In development mode, use a simplified auth response
-            // In production, this should use proper cryptographic signing with patient's private key
-            const timestamp = Date.now();
-
-            // Simple hash-based signature (for development)
-            // In production: Use actual crypto signing with user's keypair
-            const signature = await this.signChallenge(challenge, timestamp);
-
-            const authResponse = {
-                type: 'AUTH_RESPONSE',
-                signature,
-                timestamp,
-            };
-
-            if (this.socket?.readyState === WebSocket.OPEN) {
-                this.socket.send(JSON.stringify(authResponse));
-                console.log('[ConsentClient] Sent AUTH_RESPONSE');
-            }
-        } catch (error) {
-            console.error('[ConsentClient] Failed to handle auth challenge:', error);
-        }
-    }
-
-    /**
-     * Signs a challenge for authentication.
-     * In development, uses a simple hash. In production, should use proper key-based signing.
-     */
-    private async signChallenge(challenge: string, timestamp: number): Promise<string> {
-        // Development: Create a simple deterministic signature
-        // Production: Use actual private key signing
-        const message = `${challenge}:${timestamp}:${this.patientId}`;
-
-        // Use a simple hash for now (crypto.subtle not available in RN by default)
-        // This is acceptable for development but should be replaced with proper signing
-        let hash = 0;
-        for (let i = 0; i < message.length; i++) {
-            const char = message.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash;
-        }
-        return `dev_sig_${Math.abs(hash).toString(16)}`;
     }
 
     private scheduleReconnect() {
@@ -211,7 +204,7 @@ export class ConsentHandshakeClient {
 
     private updateState(state: ConnectionState) {
         this.connectionState = state;
-        this.onStateChangeCallback?.(state);
+        this.onStateChangeCallbacks.forEach(callback => callback(state));
     }
 
     /**
@@ -234,8 +227,8 @@ export class ConsentHandshakeClient {
             const nullifier = await NullifierManager.getOrCreateNullifier();
             const sessionNonce = NullifierManager.generateSessionNonce();
 
-            payload.nullifier = nullifier.toString();
-            payload.sessionNonce = sessionNonce.toString();
+            payload.nullifier = `0x${nullifier.toString(16)}`;
+            payload.sessionNonce = `0x${sessionNonce.toString(16)}`;
         }
 
         this.socket.send(JSON.stringify(payload));
@@ -305,16 +298,22 @@ export class ConsentHandshakeClient {
      * Registers a callback for incoming consent requests.
      * The UI should call this to display the consent modal.
      */
-    onConsentRequest(callback: ConsentRequestHandler) {
-        this.onRequestCallback = callback;
+    onConsentRequest(callback: ConsentRequestHandler): () => void {
+        this.onRequestCallbacks.add(callback);
+        return () => {
+            this.onRequestCallbacks.delete(callback);
+        };
     }
 
     /**
      * Registers a callback for connection state changes.
      * Useful for showing connection status indicator in UI.
      */
-    onStateChange(callback: (state: ConnectionState) => void) {
-        this.onStateChangeCallback = callback;
+    onStateChange(callback: (state: ConnectionState) => void): () => void {
+        this.onStateChangeCallbacks.add(callback);
+        return () => {
+            this.onStateChangeCallbacks.delete(callback);
+        };
     }
 
     /**

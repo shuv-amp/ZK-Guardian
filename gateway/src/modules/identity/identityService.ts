@@ -14,6 +14,8 @@ import { logger } from '../../lib/logger.js';
 import { getRedis } from '../../db/redis.js';
 import { ethers } from 'ethers';
 import { env } from '../../config/env.js';
+import { getGatewayPrivateKey } from '../../config/secrets.js';
+import { merkleTreeService } from '../audit/merkleTreeService.js';
 
 // Type imports
 type Poseidon = Awaited<ReturnType<typeof buildPoseidon>>;
@@ -226,15 +228,26 @@ export class ClinicianIdentityService {
             }
         });
 
-        // Register belief on-chain. Critical for Break-Glass contract checks.
-        if (env.POLYGON_AMOY_RPC && env.GATEWAY_PRIVATE_KEY && process.env.CREDENTIAL_REGISTRY_ADDRESS) {
-            try {
-                const provider = new ethers.JsonRpcProvider(env.POLYGON_AMOY_RPC);
-                const wallet = new ethers.Wallet(env.GATEWAY_PRIVATE_KEY, provider);
-                const credentialRegistryAbi = ['function registerCredential(bytes32 credentialHash) external'];
-                const contract = new ethers.Contract(process.env.CREDENTIAL_REGISTRY_ADDRESS, credentialRegistryAbi, wallet);
+        try {
+            await merkleTreeService.initialize();
+            const credentialLeaf = BigInt(credentialHash);
+            if (!merkleTreeService.hasCredential(credentialLeaf)) {
+                merkleTreeService.addCredential(credentialLeaf);
+            }
+        } catch (error: any) {
+            logger.error({ error: error.message }, 'Failed to update local credential Merkle tree');
+        }
 
-                logger.info({ credentialHash, address: process.env.CREDENTIAL_REGISTRY_ADDRESS }, 'Registering credential on-chain...');
+        // Register belief on-chain. Critical for Break-Glass contract checks.
+        if (env.POLYGON_AMOY_RPC && env.CREDENTIAL_REGISTRY_ADDRESS) {
+            try {
+                const privateKey = await getGatewayPrivateKey();
+                const provider = new ethers.JsonRpcProvider(env.POLYGON_AMOY_RPC);
+                const wallet = new ethers.Wallet(privateKey, provider);
+                const credentialRegistryAbi = ['function registerCredential(bytes32 credentialHash) external'];
+                const contract = new ethers.Contract(env.CREDENTIAL_REGISTRY_ADDRESS, credentialRegistryAbi, wallet);
+
+                logger.info({ credentialHash, address: env.CREDENTIAL_REGISTRY_ADDRESS }, 'Registering credential on-chain...');
 
                 const tx = await contract.registerCredential(credentialHash);
                 await tx.wait();

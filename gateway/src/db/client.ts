@@ -1,7 +1,10 @@
-import { PrismaClient as GeneratedPrismaClient } from '@prisma/client';
+import prismaPackage from '@prisma/client';
+import type { PrismaClient as PrismaClientType } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { env } from '../config/env.js';
+
+const { PrismaClient: GeneratedPrismaClient } = prismaPackage;
 
 /**
  * Prisma Database Client
@@ -11,11 +14,11 @@ import { env } from '../config/env.js';
  */
 
 // Re-export the type
-export type PrismaClient = GeneratedPrismaClient;
+export type PrismaClient = PrismaClientType;
 
-let prismaInstance: GeneratedPrismaClient | null = null;
+let prismaInstance: PrismaClientType | null = null;
 
-function createClient(): GeneratedPrismaClient {
+function createClient(): PrismaClientType {
     let connectionString = env.DATABASE_URL;
     if (env.NODE_ENV === 'production' && connectionString && !connectionString.includes('sslmode=')) {
         connectionString += (connectionString.includes('?') ? '&' : '?') + 'sslmode=require';
@@ -39,7 +42,7 @@ function createClient(): GeneratedPrismaClient {
     });
 }
 
-export function getPrisma(): GeneratedPrismaClient {
+export function getPrisma(): PrismaClientType {
     if (!prismaInstance) {
         prismaInstance = createClient();
     }

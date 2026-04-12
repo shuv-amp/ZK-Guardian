@@ -18,6 +18,7 @@ const __dirname = path.dirname(__filename);
 const CIRCUIT_BUILD = path.resolve(__dirname, '../../../../circuits/build/AccessIsAllowedSecure');
 const WASM_PATH = path.join(CIRCUIT_BUILD, 'AccessIsAllowedSecure_js/AccessIsAllowedSecure.wasm');
 const ZKEY_PATH = path.join(CIRCUIT_BUILD, 'AccessIsAllowedSecure_final.zkey');
+const REAL_PROOF_TIMEOUT_MS = 30000;
 
 // Skip if circuit files don't exist
 const circuitsExist = fs.existsSync(WASM_PATH) && fs.existsSync(ZKEY_PATH);
@@ -189,7 +190,7 @@ describe.skipIf(!circuitsExist)('Circuit Constraint Coverage', () => {
             expect(proof.pi_b).toHaveLength(3);
             expect(proof.pi_c).toHaveLength(3);
             expect(publicSignals).toBeDefined();
-        });
+        }, REAL_PROOF_TIMEOUT_MS);
 
         it('should SUCCEED for all 8 resource categories', async () => {
             const categories = ['Observation', 'DiagnosticReport', 'MedicationRequest'];
@@ -212,7 +213,7 @@ describe.skipIf(!circuitsExist)('Circuit Constraint Coverage', () => {
 
                 expect(proof).toBeDefined();
             }
-        });
+        }, REAL_PROOF_TIMEOUT_MS);
 
         it('should SUCCEED at boundary times (exact start and end)', async () => {
             const now = Math.floor(Date.now() / 1000);
@@ -244,7 +245,7 @@ describe.skipIf(!circuitsExist)('Circuit Constraint Coverage', () => {
             );
 
             expect(proof).toBeDefined();
-        });
+        }, REAL_PROOF_TIMEOUT_MS);
     });
 
     describe('PUBLIC SIGNALS: Correct output structure', () => {
@@ -270,7 +271,7 @@ describe.skipIf(!circuitsExist)('Circuit Constraint Coverage', () => {
             );
 
             expect(signals1[1]).toBe(signals2[1]); // nullifierHash
-        });
+        }, REAL_PROOF_TIMEOUT_MS);
 
         it('should have unique accessEventHash for different resources', async () => {
             const inputs1 = await prepareCircuitInputs({
@@ -304,6 +305,6 @@ describe.skipIf(!circuitsExist)('Circuit Constraint Coverage', () => {
             );
 
             expect(signals1[2]).not.toBe(signals2[2]); // accessEventHash should differ
-        });
+        }, REAL_PROOF_TIMEOUT_MS);
     });
 });

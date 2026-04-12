@@ -60,6 +60,36 @@ pnpm circuits:setup
 pnpm dev
 ```
 
+### One-Click Windows Bootstrap
+
+For a clean Windows laptop, run the master bootstrap script:
+
+```powershell
+cd zk-guardian
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap-zk-guardian.ps1 -Mode all
+```
+
+What it does:
+- Installs core tooling (Git, Node LTS, Docker Desktop, pnpm; Android Studio unless `-SkipMobile`).
+- Installer fallback order: `winget` -> `choco` -> `scoop` (manual fallback prompts if none available).
+- Uses public FHIR (`hapi.fhir.org`) by default, or local Docker FHIR with `-FhirMode local`.
+- Starts a local Hardhat chain, deploys contracts, writes addresses into `.env`.
+- Runs Prisma setup, starts gateway, and runs `verify:full-flow`.
+- Launches Android emulator + mobile install flow (unless `-SkipMobile`).
+
+Examples:
+
+```powershell
+# Default (public FHIR, full E2E verify)
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap-zk-guardian.ps1 -Mode all
+
+# Local FHIR mode
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap-zk-guardian.ps1 -Mode all -FhirMode local
+
+# Stop managed services
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap-zk-guardian.ps1 -Mode stop
+```
+
 ### Running Individual Services
 
 ```bash
@@ -81,9 +111,9 @@ pnpm contracts:test
 │ Mobile App   │◄──►│  ZK Gateway      │◄──►│  HAPI FHIR      │
 │ (Expo)       │    │  (Node.js)       │    │  (Java)         │
 │              │    │                  │    │                 │
-│ • Consent    │    │ • SMART Auth     │    │ • Patient data  │
+│ • Consent    │    │ • SMART Validate │    │ • Patient data  │
 │   approval   │    │ • ZK Proofs      │    │ • Consent       │
-│ • Audit view │    │ • Batch audit    │    │ • Observations  │
+│ • Audit view │    │ • Direct audit   │    │ • Observations  │
 └──────────────┘    └────────┬─────────┘    └─────────────────┘
                              │
                     ┌────────▼─────────┐
@@ -100,13 +130,24 @@ pnpm contracts:test
 - **Zero PII on-chain**: Only hashes and proofs
 - **Nullifier protection**: Prevents brute-force attacks
 - **HIPAA compliant**: Break-glass, audit trails, encryption
-- **SMART on FHIR**: OAuth 2.0 authentication
+- **SMART on FHIR**: external OAuth 2.0 / OIDC authentication with gateway-side validation
+
+## ✅ Production Readiness
+
+Before production deployment, ensure the following are complete:
+
+- External SMART/OIDC issuer, JWKS, introspection endpoint, and client credentials configured.
+- Gateway signing key stored in a secrets manager.
+- Circuit artifacts pinned with checksums.
+- Contract addresses verified and recorded.
+- Mobile production builds configured for HTTPS/WSS only with `TLS_PIN_MAP`.
+- GitHub Actions `Production Verification` workflow green.
+- Runbook validation for `/health` and `/ready` endpoints.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](SECURITY.md) for full requirements.
 
 ## 📄 License
 
 Apache 2.0 License - see [LICENSE](LICENSE) for details.
 
-> **⚠️ EDUCATIONAL / POC USE ONLY**: This is a Proof of Concept for verified healthcare access. Do not use in production without a professional security audit of the ZK circuits and smart contracts.
-
 ---
-

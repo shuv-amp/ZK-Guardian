@@ -1,10 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, StatusBar, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
+import { authorizedFetch, APIError } from '../../services/API';
+import { mapAccessErrorMessage, parseGatewayError } from '../../services/gatewayError';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
 
 /**
@@ -13,104 +15,117 @@ import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
  * Interface for clinicians to request patient data access.
  */
 export default function ClinicianDashboard() {
-    const { practitionerId, logout, getAccessToken } = useAuth();
+    const { practitionerId, logout } = useAuth();
     const router = useRouter();
     const [patientSearch, setPatientSearch] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [requestStatus, setRequestStatus] = useState<'idle' | 'loading' | 'waiting' | 'approved' | 'denied'>('idle');
     const [statusMessage, setStatusMessage] = useState('');
+    const [consentStatus, setConsentStatus] = useState<'unknown' | 'active' | 'expired' | 'none'>('unknown');
+    const [consentExpiresAt, setConsentExpiresAt] = useState<string | null>(null);
+    const [isCheckingConsent, setIsCheckingConsent] = useState(false);
 
-    // Track polling interval for cleanup
-    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-    const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-    // Cleanup polling on unmount
     useEffect(() => {
-        return () => {
-            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-            if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
+        let isCancelled = false;
+
+        const fetchConsentStatus = async () => {
+            const patientId = patientSearch.trim();
+            if (!patientId) {
+                setConsentStatus('unknown');
+                setConsentExpiresAt(null);
+                return;
+            }
+
+            setIsCheckingConsent(true);
+
+            try {
+                const params = new URLSearchParams({ status: 'active', limit: '50' });
+                const response = await authorizedFetch(
+                    `${config.GATEWAY_URL}/api/patient/${patientId}/consents?${params.toString()}`
+                );
+
+                if (!response.ok) {
+                    throw new Error('Consent lookup failed');
+                }
+
+                const data = await response.json();
+                const consents = Array.isArray(data.consents) ? data.consents : [];
+                const matchingConsent = consents.find((consent: any) => {
+                    const ref = consent?.grantedTo?.reference;
+                    return ref === practitionerId || ref === `Practitioner/${practitionerId}`;
+                });
+
+                if (!matchingConsent) {
+                    if (!isCancelled) {
+                        setConsentStatus('none');
+                        setConsentExpiresAt(null);
+                    }
+                    return;
+                }
+
+                const end = matchingConsent?.validPeriod?.end;
+                const expiresAt = end ? new Date(end) : null;
+
+                if (!isCancelled) {
+                    if (expiresAt && expiresAt.getTime() <= Date.now()) {
+                        setConsentStatus('expired');
+                    } else {
+                        setConsentStatus('active');
+                    }
+                    setConsentExpiresAt(end || null);
+                }
+            } catch (error: any) {
+                if (error instanceof APIError && error.status === 401) {
+                    await logout();
+                }
+                if (!isCancelled) {
+                    setConsentStatus('unknown');
+                    setConsentExpiresAt(null);
+                }
+            } finally {
+                if (!isCancelled) {
+                    setIsCheckingConsent(false);
+                }
+            }
         };
-    }, []);
+
+        fetchConsentStatus();
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [patientSearch, practitionerId, logout]);
 
     const handleAccessRequest = async (resourceType: string) => {
         if (!patientSearch.trim()) return;
 
         setIsLoading(true);
-        setRequestStatus('loading');
-        setStatusMessage('Initiating Request...');
+        setRequestStatus('waiting');
+        setStatusMessage('Requesting access and waiting for patient consent...');
 
         try {
-            const token = await getAccessToken();
-            if (!token) {
-                setRequestStatus('denied');
-                setStatusMessage('Authentication Error - Please re-login');
-                setIsLoading(false);
-                return;
-            }
-
-            const response = await fetch(`${config.GATEWAY_URL}/fhir/${resourceType}?patient=${patientSearch}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                },
-            });
+            const response = await authorizedFetch(`${config.GATEWAY_URL}/fhir/${resourceType}?patient=${patientSearch}`);
 
             if (response.ok) {
                 setRequestStatus('approved');
-                setStatusMessage('Access Granted - View Records');
-                console.log('Access granted');
-            } else if (response.status === 403) {
-                // Handshake triggered
-                setRequestStatus('waiting');
-                setStatusMessage('Waiting for Patient Consent...');
-
-                // Poll for result
-                pollForConsent(resourceType, token);
-            } else if (response.status === 401) {
-                setRequestStatus('denied');
-                setStatusMessage('Session Expired - Please re-login');
+                setStatusMessage('Access granted. You can now view records.');
             } else {
+                const { code, message } = await parseGatewayError(response);
                 setRequestStatus('denied');
-                setStatusMessage('Access Denied');
+                setStatusMessage(mapAccessErrorMessage(code, message));
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Access request failed:', error);
-            setRequestStatus('denied');
-            setStatusMessage('Network Error - Check Connection');
-        }
-        setIsLoading(false);
-    };
-
-    const pollForConsent = async (resourceType: string, token: string | null) => {
-        // Clear any existing polling
-        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-        if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
-
-        pollingIntervalRef.current = setInterval(async () => {
-            try {
-                const currentToken = token || await getAccessToken();
-                if (!currentToken) return;
-
-                const response = await fetch(`${config.GATEWAY_URL}/fhir/${resourceType}?patient=${patientSearch}`, {
-                    headers: { 'Authorization': `Bearer ${currentToken}` },
-                });
-
-                if (response.ok) {
-                    if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-                    if (pollingTimeoutRef.current) clearTimeout(pollingTimeoutRef.current);
-                    setRequestStatus('approved');
-                    setStatusMessage('Consent Received! Access Granted.');
-                }
-            } catch (e) {
-                // ignore errors while polling
+            if (error instanceof APIError && error.status === 401) {
+                setStatusMessage('Session Expired - Please re-login');
+                await logout();
+            } else {
+                setStatusMessage('Network Error - Check Connection');
             }
-        }, 3000);
-
-        // Timeout after 60s
-        pollingTimeoutRef.current = setTimeout(() => {
-            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
             setRequestStatus('denied');
-            setStatusMessage('Request Timed Out - Patient did not respond');
-        }, 60000);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     return (
@@ -141,6 +156,43 @@ export default function ClinicianDashboard() {
                             placeholderTextColor={COLORS.textLight}
                         />
                     </View>
+                    {patientSearch.trim().length > 0 && (
+                        <View
+                            style={[
+                                styles.consentStatus,
+                                consentStatus === 'active' && styles.consentActive,
+                                consentStatus === 'expired' && styles.consentExpired,
+                                consentStatus === 'none' && styles.consentMissing
+                            ]}
+                        >
+                            <Ionicons
+                                name={
+                                    isCheckingConsent
+                                        ? 'time-outline'
+                                        : consentStatus === 'active'
+                                            ? 'checkmark-circle'
+                                            : consentStatus === 'expired'
+                                                ? 'time'
+                                                : 'alert-circle'
+                                }
+                                size={16}
+                                color={
+                                    consentStatus === 'active'
+                                        ? COLORS.success
+                                        : consentStatus === 'expired'
+                                            ? COLORS.warning
+                                            : COLORS.error
+                                }
+                            />
+                            <Text style={styles.consentStatusText}>
+                                {isCheckingConsent && 'Checking consent...'}
+                                {!isCheckingConsent && consentStatus === 'active' && `Consent active${consentExpiresAt ? ` (expires ${new Date(consentExpiresAt).toLocaleDateString()})` : ''}`}
+                                {!isCheckingConsent && consentStatus === 'expired' && 'Consent expired'}
+                                {!isCheckingConsent && consentStatus === 'none' && 'No active consent'}
+                                {!isCheckingConsent && consentStatus === 'unknown' && 'Consent status unavailable'}
+                            </Text>
+                        </View>
+                    )}
                 </View>
 
                 {/* Status Indicator */}
@@ -326,6 +378,35 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: COLORS.text,
         ...FONTS.regular,
+    },
+    consentStatus: {
+        marginTop: SPACING.s,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: SPACING.xs,
+        paddingVertical: SPACING.xs,
+        paddingHorizontal: SPACING.s,
+        borderRadius: RADIUS.m,
+        backgroundColor: COLORS.surface,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    consentActive: {
+        backgroundColor: COLORS.successBg,
+        borderColor: COLORS.success,
+    },
+    consentExpired: {
+        backgroundColor: COLORS.warningBg,
+        borderColor: COLORS.warning,
+    },
+    consentMissing: {
+        backgroundColor: COLORS.errorBg,
+        borderColor: COLORS.error,
+    },
+    consentStatusText: {
+        fontSize: 12,
+        color: COLORS.textSecondary,
+        ...FONTS.medium,
     },
     section: {
         marginBottom: SPACING.xl,

@@ -61,13 +61,35 @@ class SecretsManager {
 
         // Derive encryption key from a master secret
         // In production, this should come from a hardware security module
-        const masterSecret = process.env.SECRETS_MASTER_KEY || 'zk-guardian-dev-key-change-in-prod';
+        let masterSecret = process.env.SECRETS_MASTER_KEY;
+        if (!masterSecret) {
+            if (env.NODE_ENV === 'production') {
+                throw new Error('SECRETS_MASTER_KEY is required in production');
+            }
+            masterSecret = 'zk-guardian-dev-key-change-in-prod';
+        }
         const salt = 'zk-guardian-secrets-salt';
 
         this.encryptionKey = await scryptAsync(masterSecret, salt, 32) as Buffer;
         this.initialized = true;
 
         logger.info('Secrets manager initialized');
+    }
+
+    isInitialized(): boolean {
+        return this.initialized;
+    }
+
+    getBackendName(): 'vault' | 'aws-secrets-manager' | 'env' {
+        if (process.env.VAULT_ADDR && process.env.VAULT_TOKEN) {
+            return 'vault';
+        }
+
+        if (process.env.AWS_REGION && (process.env.AWS_SECRET_ID || process.env.AWS_SECRETS_PREFIX)) {
+            return 'aws-secrets-manager';
+        }
+
+        return 'env';
     }
 
     /**
@@ -364,4 +386,11 @@ export async function initializeSecrets(): Promise<void> {
     if (balance.isLow && env.NODE_ENV === 'production') {
         logger.warn({ balance }, 'Gateway wallet balance is low - transactions may fail');
     }
+}
+
+export function getSecretsManagerStatus(): { initialized: boolean; backend: string } {
+    return {
+        initialized: secretsManager.isInitialized(),
+        backend: secretsManager.getBackendName()
+    };
 }

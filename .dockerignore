@@ -3,6 +3,8 @@ node_modules
 apps
 packages
 circuits
+!circuits/build
+!circuits/build/**
 dist
 .env
 .git

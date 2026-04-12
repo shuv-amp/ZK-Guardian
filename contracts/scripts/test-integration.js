@@ -93,8 +93,8 @@ async function main() {
 
     // console.log("   Input:", input);
 
-    const wasmPath = path.join(__dirname, "../../circuits/build/AccessIsAllowedSecure_js/AccessIsAllowedSecure.wasm");
-    const zkeyPath = path.join(__dirname, "../../circuits/build/AccessIsAllowedSecure_final.zkey");
+    const wasmPath = path.join(__dirname, "../../circuits/build/AccessIsAllowedSecure/AccessIsAllowedSecure_js/AccessIsAllowedSecure.wasm");
+    const zkeyPath = path.join(__dirname, "../../circuits/build/AccessIsAllowedSecure/AccessIsAllowedSecure_final.zkey");
 
     if (!fs.existsSync(wasmPath) || !fs.existsSync(zkeyPath)) {
         throw new Error("Circuit artifacts not found! Run setup-all.sh first.");

@@ -5,10 +5,13 @@
     "description": "ZK Guardian Circom circuits",
     "license": "Apache-2.0",
     "scripts": {
-        "compile": "bash scripts/compile.sh",
-        "trusted-setup": "bash scripts/trusted-setup.sh",
-        "test": "mocha test/**/*.test.js --timeout 120000 --exit",
-        "clean": "rm -rf build/*.wasm build/*.r1cs build/*.zkey build/*.json"
+        "pretest": "bash scripts/ensure-artifacts.sh",
+        "compile": "bash scripts/compile-all.sh",
+        "setup": "bash scripts/setup-all.sh",
+        "trusted-setup": "bash scripts/setup-all.sh",
+        "test": "mocha test/AccessIsAllowedSecure.test.js --timeout 120000 --exit",
+        "test:legacy": "mocha test/accessIsAllowed.test.js --timeout 120000 --exit",
+        "clean": "rm -rf build/*"
     },
     "devDependencies": {
         "chai": "^4.3.10",

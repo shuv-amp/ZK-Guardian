@@ -69,86 +69,44 @@ export class MerkleTreeService {
         return this.getRoot();
     }
 
+    hasCredential(credentialHash: bigint): boolean {
+        if (!this.initialized) throw new Error('MerkleTreeService not initialized');
+        return this.leafToIndex.has(credentialHash);
+    }
+
     /**
      * Get the current Merkle Root
      */
     getRoot(): bigint {
         if (!this.initialized) throw new Error('MerkleTreeService not initialized');
         if (this.leaves.length === 0) return this.zeros[this.levels - 1]; // Approximate for empty tree logic
-
-        // Recompute root (simple naive implementation for verification)
-        // In production, optimize by caching nodes
         return this.computeRootFromLeaves(this.leaves);
     }
 
     private computeRootFromLeaves(leaves: bigint[]): bigint {
-        let currentLevel = [...leaves];
-
-        // Pad with zeros to next power of 2 if needed (not strictly necessary if we use zeros array, but handling partial tree)
-        // Actually, we process level by level using the zeros for missing siblings
-
-        let level = 0;
-        let nodes = [...leaves];
-
-        // Pad to 2^levels ? No, that's too big.
-        // We compute up to root efficiently
-
-        // Sparse implementation:
-        // iterate from bottom to top
-        // if node index is even, hash(node, zero/sibling). 
-
-        // Simpler complete re-hashing for proof correctness:
-        // We conceptually have 2^levels leaves.
-
-        // Let's implement getting proof for a specific leaf, which implicitly computes the path
-        return 0n; // This method is actually hard to do efficiently without storing the tree. 
-        // Let's assume we rely on generateProof to get validity.
-
-        // Better approach for root:
-        // Recursive hash
-        // return this._getRootRecursive(0, 0, Math.pow(2, this.levels));
-
-        // NOTE: For this implementation, since we only have a few credentials, 
-        // let's built it dynamically or assume the tree is small.
-        // Or even better: use a library like 'fixed-merkle-tree', but I couldn't install it easily.
-
-        // Correct approach:
-        // We will just build the path for a leaf when requested.
-        // But we DO need to return the expected ROOT to compare with on-chain.
-
-        // Let's implement full tree computation
-        let nextLevel: bigint[] = [];
-
-        // Level 0
+        // Recompute root (simple naive implementation for verification).
+        // In production, this could be optimized by caching intermediate nodes.
         let layer = [...leaves];
 
-        for (let l = 0; l < this.levels; l++) {
-            nextLevel = [];
+        for (let level = 0; level < this.levels; level++) {
+            const nextLevel: bigint[] = [];
+
             for (let i = 0; i < layer.length; i += 2) {
                 const left = layer[i];
-                const right = (i + 1 < layer.length) ? layer[i + 1] : this.zeros[l];
+                const right = (i + 1 < layer.length) ? layer[i + 1] : this.zeros[level];
                 nextLevel.push(this.hashLeftRight(left, right));
-            }
-            // If we have an odd single node at the end (should have been handled by loop condition + zeros), 
-            // but the loop handles pairs.
-            // If layer length was odd, the loop handles it by using this.zeros[l] as right.
-            // But we need to handle the rest of the empty tree to the right?
-
-            // Wait, standard Merkle tree size is fixed 2^levels.
-            // If we have 3 leaves, we have [h(0,1), h(2,zero), h(zero,zero)...]
-
-            // Optimization: if layer stopped early, the rest are just zeros[l+1]
-            // We only need to compute up to the last active node's parent
-
-            // If layer has 1 item, it's just that item? No, must hash with zero.
-            if (layer.length % 2 === 1) {
-                // Actually the loop above handles i+1 check.
             }
 
             layer = nextLevel;
+
+            // Keep folding all the way up to configured tree height.
+            // This must match the circuit's fixed-depth Merkle path semantics.
+            if (layer.length === 0) {
+                layer = [this.zeros[level]];
+            }
         }
 
-        return layer[0];
+        return layer[0] ?? this.zeros[this.levels - 1];
     }
 
     // Correct logic for root update
@@ -209,6 +167,10 @@ export class MerkleTreeService {
         this.leaves = leaves;
         this.leafToIndex.clear();
         leaves.forEach((leaf, idx) => this.leafToIndex.set(leaf, idx));
+    }
+
+    getLeafCount(): number {
+        return this.leaves.length;
     }
 }
 

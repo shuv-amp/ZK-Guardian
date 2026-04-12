@@ -1,5 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
-import { ethers, Wallet, Contract } from 'ethers';
+import { ethers, Contract } from 'ethers';
 import { config } from '../config/env';
 import { NullifierManager } from './NullifierManager';
 
@@ -41,14 +41,9 @@ export interface ConsentStatus {
 }
 
 export class ConsentRevocationService {
-    private wallet: Wallet | null = null;
+    private wallet: ethers.Wallet | ethers.HDNodeWallet | null = null;
     private provider: ethers.JsonRpcProvider | null = null;
     private contract: Contract | null = null;
-    // NullifierManager uses static methods - no need for instance
-
-    constructor() {
-        // No initialization needed - NullifierManager is accessed statically
-    }
 
     /**
      * Initialize the service with blockchain connection
@@ -94,11 +89,11 @@ export class ConsentRevocationService {
             const storedKey = await SecureStore.getItemAsync(WALLET_KEY);
 
             if (storedKey) {
-                this.wallet = new Wallet(storedKey, this.provider!);
+                this.wallet = new ethers.Wallet(storedKey, this.provider!);
                 console.log('[ConsentRevocation] Loaded existing wallet');
             } else {
                 // Create new wallet
-                const newWallet = Wallet.createRandom();
+                const newWallet = ethers.Wallet.createRandom();
                 await SecureStore.setItemAsync(WALLET_KEY, newWallet.privateKey);
                 this.wallet = newWallet.connect(this.provider!);
                 console.log('[ConsentRevocation] Created new wallet');
@@ -173,7 +168,7 @@ export class ConsentRevocationService {
             console.log('[ConsentRevocation] Transaction confirmed:', receipt.hash);
 
             // Update nullifier to invalidate old proofs
-            await this.nullifierManager.regenerateOnRevocation(consentHash);
+            await NullifierManager.resetNullifier('consent_revoke');
 
             return {
                 success: true,
@@ -349,7 +344,7 @@ export class ConsentRevocationService {
      */
     async importWallet(encryptedJson: string, password: string): Promise<boolean> {
         try {
-            const wallet = await Wallet.fromEncryptedJson(encryptedJson, password);
+            const wallet = await ethers.Wallet.fromEncryptedJson(encryptedJson, password);
             await SecureStore.setItemAsync(WALLET_KEY, wallet.privateKey);
             this.wallet = wallet.connect(this.provider!);
             return true;

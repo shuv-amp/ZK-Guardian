@@ -11,10 +11,10 @@ import { AuthorizationError, ValidationError, ResourceNotFoundError } from '../l
 import { z } from 'zod';
 import axios from 'axios';
 import { ethers } from 'ethers';
-import { createHash } from 'crypto';
 import { prisma } from '../db/client.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
+import { getGatewayPrivateKey } from '../config/secrets.js';
 import { validateQuery, validateBody } from '../middleware/validation.js';
 import { hashFhirConsent } from '../utils/fhirToPoseidon.js';
 import { webhookService } from '../modules/notification/webhookService.js';
@@ -47,7 +47,7 @@ const CreateConsentSchema = z.object({
 });
 
 const RevokeConsentSchema = z.object({
-    signature: z.string().min(1).max(500),
+    signature: z.string().min(1).max(500).optional(),
     reason: z.string().max(500).optional(),
     revokeImmediately: z.boolean().default(true)
 });
@@ -55,9 +55,51 @@ const RevokeConsentSchema = z.object({
 // GET /api/patient/:patientId/consents
 
 consentsRouter.get('/', validateQuery(ListConsentsQuerySchema), async (req: Request, res: Response, next: NextFunction) => {
+    // 1. Dev-only: Synthetic Consent Injection
+    // Check for synthetic override FIRST to avoid DB errors with fake IDs
+    if (env.NODE_ENV !== 'production' && env.ENABLE_SYNTHETIC_CONSENT) {
+        const { patientId } = req.params;
+        if (patientId && patientId.toLowerCase().includes('riley')) {
+            const now = new Date();
+            const generateConsent = (idSuffix: string, practId: string, name: string) => ({
+                id: `synthetic-${patientId.replace('Patient/', '')}-${idSuffix}`,
+                status: 'active',
+                scope: 'patient-privacy',
+                grantedTo: {
+                    type: 'Practitioner',
+                    reference: practId,
+                    displayName: name
+                },
+                allowedCategories: ['http://loinc.org|55217-7'],
+                deniedCategories: [],
+                validPeriod: {
+                    start: now.toISOString(),
+                    end: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
+                },
+                createdAt: now.toISOString(),
+                revokedAt: null
+            });
+
+            return res.json({
+                consents: [
+                    generateConsent('1', 'dr-demo-456', 'Dr. Jordan Lee'),
+                    generateConsent('2', 'Practitioner/dr-demo-456', 'Dr. Jordan Lee'),
+                    generateConsent('3', 'practitioner-joden', 'Dr. Joden Lee'),
+                    generateConsent('4', 'practitioner-456', 'Dr. Demo')
+                ],
+                pagination: {
+                    total: 1,
+                    limit: 50,
+                    offset: 0,
+                    hasMore: false
+                }
+            });
+        }
+    }
+
     try {
         const { patientId } = req.params;
-        const query = req.query as unknown as z.infer<typeof ListConsentsQuerySchema>;
+        const query = (req as any).validatedQuery as z.infer<typeof ListConsentsQuerySchema>;
 
         // Security: Patient can only view their own data.
         const smartContext = req.smartContext;
@@ -120,6 +162,8 @@ consentsRouter.get('/', validateQuery(ListConsentsQuerySchema), async (req: Requ
         next(error);
     }
 });
+
+// (Synthetic endpoint merged into main handler above)
 
 // POST /api/patient/:patientId/consents
 
@@ -293,17 +337,52 @@ consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), asy
         let txHash: string | null = null;
         let blockNumber: number | null = null;
 
-        // Compute consent hash for on-chain revocation
-        const consentHashHex = createHash('sha256')
-            .update(consentId + patientId)
-            .digest('hex');
-        const consentHashBytes32 = '0x' + consentHashHex.slice(0, 64);
+        // Compute revocation hash in the same domain used by ZK proof verification.
+        // We hash the Consent resource payload with Poseidon so on-chain revocation
+        // actually blocks subsequent proofs for this consent.
+        let consentForHashing: any = null;
+        try {
+            const fhirConsentResponse = await axios.get(
+                `${HAPI_FHIR_URL}/Consent/${consentId}`,
+                { headers: { Accept: 'application/fhir+json' } }
+            );
+            consentForHashing = fhirConsentResponse.data;
+        } catch (fhirReadError: any) {
+            logger.warn({
+                consentId,
+                patientId,
+                error: fhirReadError?.message
+            }, 'Failed to fetch Consent from FHIR for revocation hashing, using local fallback payload');
+        }
+
+        if (!consentForHashing) {
+            consentForHashing = {
+                resourceType: 'Consent',
+                id: consentId,
+                status: 'active',
+                patient: { reference: `Patient/${patientId}` },
+                provision: {
+                    period: {
+                        start: cached.validFrom.toISOString(),
+                        end: cached.validUntil.toISOString()
+                    },
+                    class: cached.allowedCategories.map((code) => ({ code }))
+                }
+            };
+        }
+
+        const consentHash = await hashFhirConsent(consentForHashing);
+        const consentHashBytes32 = ethers.zeroPadValue(
+            ethers.toBeHex(BigInt(consentHash)),
+            32
+        );
 
         // Blockchain Revocation. Making it official.
-        if (env.POLYGON_AMOY_RPC && env.GATEWAY_PRIVATE_KEY && env.CONSENT_REVOCATION_REGISTRY_ADDRESS) {
+        if (env.POLYGON_AMOY_RPC && env.CONSENT_REVOCATION_REGISTRY_ADDRESS) {
             try {
+                const privateKey = await getGatewayPrivateKey();
                 const provider = new ethers.JsonRpcProvider(env.POLYGON_AMOY_RPC);
-                const wallet = new ethers.Wallet(env.GATEWAY_PRIVATE_KEY, provider);
+                const wallet = new ethers.Wallet(privateKey, provider);
 
                 const contract = new ethers.Contract(
                     env.CONSENT_REVOCATION_REGISTRY_ADDRESS,

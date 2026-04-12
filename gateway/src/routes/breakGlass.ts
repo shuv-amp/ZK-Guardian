@@ -21,8 +21,10 @@ import { validateOrThrow, BreakGlassPayloadSchema } from '../schemas/validation.
 import { validateBody, validateParams, PatientParamsSchema } from '../middleware/validation.js';
 import { generateAndSubmitBreakGlassProof } from '../lib/zkProofService.js';
 import { webhookService } from '../modules/notification/webhookService.js';
+import { isBreakGlassAllowed } from './patientPreferences.js';
 
 export const breakGlassRouter: Router = Router();
+const BREAK_GLASS_PROOF_TIMEOUT_MS = Number(process.env.BREAK_GLASS_PROOF_TIMEOUT_MS || 90000);
 
 // Schemas
 
@@ -57,6 +59,14 @@ breakGlassRouter.post(
             const clinicianId = smartContext.practitioner;
             const clinicianName = smartContext.practitionerName || 'Unknown';
             const department = smartContext.department || 'Unknown';
+
+            const breakGlassAllowed = await isBreakGlassAllowed(patientId);
+            if (!breakGlassAllowed) {
+                return res.status(403).json({
+                    error: 'BREAK_GLASS_DISABLED_BY_PATIENT',
+                    message: 'Patient has disabled emergency break-glass access'
+                });
+            }
 
             // Check for existing active break-glass session
             const existingSession = await prisma.breakGlassSession.findFirst({
@@ -155,7 +165,7 @@ breakGlassRouter.post(
                 const result = await Promise.race([
                     zkProofPromise,
                     new Promise<{ success: false; error: string }>((resolve) =>
-                        setTimeout(() => resolve({ success: false, error: 'Timeout' }), 30000)
+                        setTimeout(() => resolve({ success: false, error: 'Timeout' }), BREAK_GLASS_PROOF_TIMEOUT_MS)
                     )
                 ]);
 

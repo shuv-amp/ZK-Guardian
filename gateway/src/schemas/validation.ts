@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { formatFieldElementHex, isFieldElementInput } from '../lib/fieldEncoding.js';
 
 /**
  * Zod Validation Schemas for ZK Guardian API
@@ -89,8 +90,16 @@ export const ConsentResponseSchema = z.object({
     type: z.literal('CONSENT_RESPONSE'),
     requestId: z.string().uuid(),
     approved: z.boolean(),
-    nullifier: z.string().regex(/^0x[a-fA-F0-9]+$/).optional(),
-    sessionNonce: z.string().optional(),
+    nullifier: z.string()
+        .trim()
+        .refine(isFieldElementInput, 'Nullifier must be a valid hex or decimal integer string')
+        .transform(formatFieldElementHex)
+        .optional(),
+    sessionNonce: z.string()
+        .trim()
+        .refine(isFieldElementInput, 'Session nonce must be a valid hex or decimal integer string')
+        .transform(formatFieldElementHex)
+        .optional(),
     signature: z.string().optional()
 });
 

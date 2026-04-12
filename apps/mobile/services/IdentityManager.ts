@@ -11,8 +11,10 @@
 import * as SecureStore from '../utils/SecureStorage';
 import * as Crypto from 'expo-crypto';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { config } from '../config/env';
+import { secureFetch } from '../utils/secureFetch';
 
-const NULLIFIER_KEY = 'zk_guardian_identity_nullifier';
+const NULLIFIER_KEY = 'zk_guardian_patient_nullifier';
 const PATIENT_ID_KEY = 'zk_guardian_patient_id';
 const REGISTRATION_KEY = 'zk_guardian_registration_status';
 
@@ -30,7 +32,19 @@ export interface RegistrationResult {
     registeredAt: string;
 }
 
-const GATEWAY_URL = process.env.EXPO_PUBLIC_GATEWAY_URL || 'https://gateway.zkguardian.io';
+const GATEWAY_URL = config.GATEWAY_URL;
+
+const buildAuthHeaders = (accessToken?: string) => {
+    return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+};
+
+const ensureHexValue = (value: string): string => {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('0x') || trimmed.startsWith('0X')) {
+        return `0x${trimmed.slice(2)}`;
+    }
+    return `0x${trimmed}`;
+};
 
 export class IdentityManager {
 
@@ -40,7 +54,7 @@ export class IdentityManager {
      * 
      * @param fhirPatientId - The Patient ID from FHIR server
      */
-    static async initializeIdentity(fhirPatientId: string): Promise<RegistrationResult> {
+    static async initializeIdentity(fhirPatientId: string, accessToken?: string): Promise<RegistrationResult> {
         console.log('[IdentityManager] Initializing identity for:', fhirPatientId);
 
         // Generate nullifier if doesn't exist
@@ -60,12 +74,11 @@ export class IdentityManager {
 
         // Register with gateway
         try {
-            const response = await fetch(`${GATEWAY_URL}/identity/patient/register`, {
+            const response = await secureFetch(`${GATEWAY_URL}/identity/patient/register`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...buildAuthHeaders(accessToken) },
                 body: JSON.stringify({
-                    fhirPatientId,
-                    nullifier: nullifierHex
+                    nullifier: ensureHexValue(nullifierHex)
                 })
             });
 
@@ -122,7 +135,7 @@ export class IdentityManager {
      * Get blinded identity fields for ZK proof
      * Requires biometric authentication
      */
-    static async getBlindedIdentity(): Promise<{
+    static async getBlindedIdentity(accessToken?: string): Promise<{
         blindedIdFields: string[];
         sessionNonce: string;
     }> {
@@ -144,12 +157,11 @@ export class IdentityManager {
         }
 
         // Request blinded identity from gateway
-        const response = await fetch(`${GATEWAY_URL}/identity/patient/blinded`, {
+        const response = await secureFetch(`${GATEWAY_URL}/identity/patient/blinded`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...buildAuthHeaders(accessToken) },
             body: JSON.stringify({
-                fhirPatientId: patientId,
-                nullifier: nullifierHex
+                nullifier: ensureHexValue(nullifierHex)
             })
         });
 
@@ -164,7 +176,7 @@ export class IdentityManager {
      * Rotate nullifier and reset identity
      * Called when user wants to break audit trail linkability
      */
-    static async rotateIdentity(reason: 'consent_revoke' | 'user_request'): Promise<void> {
+    static async rotateIdentity(reason: 'consent_revoke' | 'user_request', accessToken?: string): Promise<void> {
         console.log('[IdentityManager] Rotating identity, reason:', reason);
 
         // Require biometric for this sensitive operation
@@ -189,12 +201,11 @@ export class IdentityManager {
             .join('');
 
         // Update on gateway
-        const response = await fetch(`${GATEWAY_URL}/identity/patient/reset`, {
+        const response = await secureFetch(`${GATEWAY_URL}/identity/patient/reset`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...buildAuthHeaders(accessToken) },
             body: JSON.stringify({
-                fhirPatientId: patientId,
-                newNullifier: newNullifierHex
+                newNullifier: ensureHexValue(newNullifierHex)
             })
         });
 
@@ -254,13 +265,14 @@ export class ClinicianIdentityManager {
     static async registerCredentials(
         fhirPractitionerId: string,
         licenseNumber: string,
-        facilityId: string
+        facilityId: string,
+        accessToken?: string
     ): Promise<{ success: boolean; credentialHash: string }> {
         console.log('[ClinicianIdentityManager] Registering credentials');
 
-        const response = await fetch(`${GATEWAY_URL}/identity/clinician/register`, {
+            const response = await secureFetch(`${GATEWAY_URL}/identity/clinician/register`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...buildAuthHeaders(accessToken) },
             body: JSON.stringify({
                 fhirPractitionerId,
                 licenseNumber,
@@ -285,33 +297,4 @@ export class ClinicianIdentityManager {
         };
     }
 
-    /**
-     * Get clinician fields for ZK proof
-     */
-    static async getClinicianFields(): Promise<{
-        clinicianIdFields: string[];
-        licenseFields: string[];
-    }> {
-        const practitionerId = await SecureStore.getItemAsync('clinician_practitioner_id');
-        const license = await SecureStore.getItemAsync('clinician_license');
-
-        if (!practitionerId || !license) {
-            throw new Error('CREDENTIALS_NOT_REGISTERED');
-        }
-
-        const response = await fetch(`${GATEWAY_URL}/identity/clinician/fields`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                fhirPractitionerId: practitionerId,
-                licenseNumber: license
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error('GET_FIELDS_FAILED');
-        }
-
-        return response.json();
-    }
 }

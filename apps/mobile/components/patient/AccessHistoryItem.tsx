@@ -26,8 +26,19 @@ export function AccessHistoryItem({
     accessTimestamp,
     isBreakGlass,
     isVerified,
+    accessEventHash,
+    txHash,
     onPress
-}: AccessHistoryItemProps) {
+}: AccessHistoryItemProps & { accessEventHash?: string; txHash?: string }) {
+    const [expanded, setExpanded] = React.useState(false);
+
+    // Debug logging
+    React.useEffect(() => {
+        if (expanded) {
+            console.log('AccessHistoryItem Expanded:', { accessEventHash, txHash });
+        }
+    }, [expanded, accessEventHash, txHash]);
+
     const formatTime = (dateStr: string) => {
         const date = new Date(dateStr);
         const now = new Date();
@@ -47,52 +58,105 @@ export function AccessHistoryItem({
         });
     };
 
+    const handlePress = () => {
+        setExpanded(!expanded);
+        if (onPress) onPress();
+    };
+
+    const hasProof = !!(accessEventHash || txHash);
+
     return (
-        <TouchableOpacity style={styles.container} onPress={onPress} disabled={!onPress}>
-            <View style={styles.iconContainer}>
-                <Ionicons
-                    name={isBreakGlass ? 'flash' : 'document-text-outline'}
-                    size={20}
-                    color={isBreakGlass ? COLORS.error : COLORS.primary}
-                />
-            </View>
-
-            <View style={styles.content}>
-                <View style={styles.header}>
-                    <Text style={styles.clinicianName}>{clinicianName}</Text>
-                    <Text style={styles.timestamp}>{formatTime(accessTimestamp)}</Text>
+        <TouchableOpacity style={styles.container} onPress={handlePress} activeOpacity={0.7}>
+            <View style={styles.mainRow}>
+                <View style={[styles.iconContainer, isBreakGlass && styles.iconContainerAlert]}>
+                    <Ionicons
+                        name={isBreakGlass ? 'warning' : 'shield-checkmark'}
+                        size={20}
+                        color={isBreakGlass ? COLORS.error : COLORS.primary}
+                    />
                 </View>
 
-                <View style={styles.details}>
-                    <Text style={styles.department}>{department}</Text>
-                    <View style={styles.dot} />
-                    <Text style={styles.resourceType}>{resourceType}</Text>
-                </View>
-            </View>
-
-            <View style={styles.badges}>
-                {isBreakGlass && (
-                    <View style={styles.breakGlassBadge}>
-                        <Text style={styles.badgeText}>EMERGENCY</Text>
+                <View style={styles.content}>
+                    <View style={styles.header}>
+                        <Text style={styles.clinicianName}>{clinicianName}</Text>
+                        <Text style={styles.timestamp}>{formatTime(accessTimestamp)}</Text>
                     </View>
-                )}
-                {isVerified && (
-                    <Ionicons name="shield-checkmark" size={18} color={COLORS.success} />
-                )}
+
+                    <View style={styles.details}>
+                        <Text style={styles.department}>{department}</Text>
+                        <View style={styles.dot} />
+                        <Text style={styles.resourceType}>{resourceType}</Text>
+                    </View>
+
+                    {/* Visual cue for expansion */}
+                    {hasProof && (
+                        <View style={styles.expandHint}>
+                            <Text style={styles.expandText}>
+                                {expanded ? 'Hide Proof' : 'View Proof'}
+                            </Text>
+                            <Ionicons
+                                name={expanded ? 'chevron-up' : 'chevron-down'}
+                                size={12}
+                                color={COLORS.primary}
+                            />
+                        </View>
+                    )}
+                </View>
+
+                <View style={styles.badges}>
+                    {isBreakGlass && (
+                        <View style={styles.breakGlassBadge}>
+                            <Text style={styles.badgeText}>ALERT</Text>
+                        </View>
+                    )}
+                </View>
             </View>
+
+            {expanded && hasProof && (
+                <View style={styles.proofDetails}>
+                    <View style={styles.divider} />
+                    <Text style={styles.proofHeader}>Cryptographic Proof</Text>
+
+                    {accessEventHash ? (
+                        <View style={styles.hashRow}>
+                            <Text style={styles.hashLabel}>Event Hash:</Text>
+                            <Text style={styles.hashValue} numberOfLines={1} ellipsizeMode="middle">
+                                {accessEventHash}
+                            </Text>
+                        </View>
+                    ) : <Text>No Event Hash</Text>}
+
+                    {txHash ? (
+                        <View style={styles.hashRow}>
+                            <Text style={styles.hashLabel}>Polygon Tx:</Text>
+                            <Text style={styles.hashValue} numberOfLines={1} ellipsizeMode="middle">
+                                {txHash}
+                            </Text>
+                        </View>
+                    ) : null}
+
+                    <View style={styles.verifiedRow}>
+                        <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
+                        <Text style={styles.verifiedText}>Verified on-chain</Text>
+                    </View>
+                </View>
+            )}
         </TouchableOpacity>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
-        flexDirection: 'row',
-        alignItems: 'center',
         backgroundColor: COLORS.surface,
-        padding: 14,
         borderRadius: RADIUS.md,
         marginBottom: SPACING.sm,
         ...SHADOWS.sm,
+        overflow: 'hidden',
+    },
+    mainRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 14,
     },
     iconContainer: {
         width: 40,
@@ -102,6 +166,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: SPACING.md,
+    },
+    iconContainerAlert: {
+        backgroundColor: COLORS.errorBg,
     },
     content: {
         flex: 1,
@@ -156,5 +223,62 @@ const styles = StyleSheet.create({
         fontSize: 9,
         fontWeight: FONTS.weights.bold,
         color: COLORS.error,
+    },
+    proofDetails: {
+        paddingHorizontal: 14,
+        paddingBottom: 14,
+        backgroundColor: COLORS.surface,
+    },
+    divider: {
+        height: 1,
+        backgroundColor: COLORS.border,
+        marginBottom: 12,
+        opacity: 0.5,
+    },
+    proofHeader: {
+        fontSize: 11,
+        fontWeight: FONTS.weights.semibold,
+        color: COLORS.textSecondary,
+        marginBottom: 8,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    hashRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    hashLabel: {
+        fontSize: 11,
+        color: COLORS.textTertiary,
+        width: 70,
+    },
+    hashValue: {
+        fontSize: 11,
+        color: COLORS.text,
+        fontFamily: 'monospace', // Ensure monospace for hashes
+        flex: 1,
+    },
+    verifiedRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 4,
+        gap: 6,
+    },
+    verifiedText: {
+        fontSize: 11,
+        color: COLORS.success,
+        fontWeight: FONTS.weights.medium,
+    },
+    expandHint: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 6,
+        gap: 4,
+    },
+    expandText: {
+        fontSize: 11,
+        color: COLORS.primary,
+        fontWeight: FONTS.weights.medium,
     },
 });

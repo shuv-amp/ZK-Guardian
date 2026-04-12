@@ -92,6 +92,19 @@ export function useConsent(): UseConsentState {
         }
     }, []);
 
+    const onRequestUnsubRef = useRef<null | (() => void)>(null);
+    const onStateUnsubRef = useRef<null | (() => void)>(null);
+
+    useEffect(() => {
+        onRequestUnsubRef.current = consentClient.onConsentRequest(handleConsentRequest);
+        onStateUnsubRef.current = consentClient.onStateChange(handleStateChange);
+
+        return () => {
+            onRequestUnsubRef.current?.();
+            onStateUnsubRef.current?.();
+        };
+    }, [handleConsentRequest, handleStateChange]);
+
     // Ref to track if loading is in progress (for stable callback)
     const isLoadingRef = useRef(false);
 
@@ -146,10 +159,6 @@ export function useConsent(): UseConsentState {
                 if (!patientId) {
                     throw new Error('No patient ID available');
                 }
-
-                // Set up listeners (only once)
-                consentClient.onConsentRequest(handleConsentRequest);
-                consentClient.onStateChange(handleStateChange);
 
                 // Connect
                 consentClient.connect(patientId);

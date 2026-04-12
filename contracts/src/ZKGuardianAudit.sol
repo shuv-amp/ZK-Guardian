@@ -116,6 +116,16 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
         uint256[2] calldata _pC,
         uint256[7] calldata _pubSignals
     ) external {
+        _verifyAndAudit(_pA, _pB, _pC, _pubSignals, msg.sender);
+    }
+
+    function _verifyAndAudit(
+        uint256[2] memory _pA,
+        uint256[2][2] memory _pB,
+        uint256[2] memory _pC,
+        uint256[7] memory _pubSignals,
+        address auditor
+    ) internal {
         // 1. Compute Proof Hash
         bytes32 proofHash = keccak256(abi.encodePacked(_pA, _pB, _pC, _pubSignals));
         if (verifiedProofs[proofHash]) {
@@ -123,9 +133,21 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
         }
 
         // 2. Validate Public Signals
-        if (_pubSignals[0] != 1) revert InvalidProof();
+        // Supports two layouts:
+        // - Legacy circuit layout:
+        //   [proofOfPolicyMatch, currentTimestamp, accessEventHash, isValid, blindedPatientId, blindedAccessHash, nullifierHash]
+        // - New layout:
+        //   [isValid, blindedPatientId, blindedAccessHash, nullifierHash, proofOfPolicyMatch, currentTimestamp, accessEventHash]
+        bool legacyLayout;
+        if (_pubSignals[0] == 1) {
+            legacyLayout = false;
+        } else if (_pubSignals[3] == 1) {
+            legacyLayout = true;
+        } else {
+            revert InvalidProof();
+        }
 
-        uint256 proofTimestamp = _pubSignals[5];
+        uint256 proofTimestamp = legacyLayout ? _pubSignals[1] : _pubSignals[5];
         if (
             proofTimestamp > block.timestamp + TIMESTAMP_THRESHOLD ||
             proofTimestamp < block.timestamp - TIMESTAMP_THRESHOLD
@@ -133,7 +155,7 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
             revert InvalidTimestamp(proofTimestamp, block.timestamp);
         }
 
-        uint256 nullifierHash = _pubSignals[3];
+        uint256 nullifierHash = legacyLayout ? _pubSignals[6] : _pubSignals[3];
         if (usedNullifiers[nullifierHash]) revert NullifierAlreadyUsed();
 
         // 3. Verify Proof
@@ -143,18 +165,21 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
 
         // 4. Update State
         verifiedProofs[proofHash] = true;
-        bytes32 accessEventHash = bytes32(_pubSignals[6]);
+        bytes32 accessEventHash = bytes32(legacyLayout ? _pubSignals[2] : _pubSignals[6]);
         accessTimestamps[accessEventHash] = uint64(block.timestamp);
         usedNullifiers[nullifierHash] = true;
+
+        uint256 blindedPatientId = legacyLayout ? _pubSignals[4] : _pubSignals[1];
+        uint256 blindedAccessHash = legacyLayout ? _pubSignals[5] : _pubSignals[2];
 
         // 5. Emit Event
         emit AccessAudited(
             accessEventHash,
             proofHash,
-            _pubSignals[1], // blindedPatientId
-            _pubSignals[2], // blindedAccessHash
+            blindedPatientId,
+            blindedAccessHash,
             uint64(block.timestamp),
-            msg.sender
+            auditor
         );
     }
 
@@ -173,7 +198,7 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
         }
 
         for (uint256 i = 0; i < len; ) {
-            this.verifyAndAudit(_pAs[i], _pBs[i], _pCs[i], _pubSignals[i]);
+            _verifyAndAudit(_pAs[i], _pBs[i], _pCs[i], _pubSignals[i], msg.sender);
             unchecked { ++i; }
         }
     }
@@ -200,16 +225,20 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
 
     /**
      * @notice Verify a Break-Glass (Emergency Access) proof and log the audit.
-     * @dev BreakGlass V2 circuit has 9 public signals:
-     *      [0] isValid (must be 1)
-     *      [1] blindedClinicianId
-     *      [2] blindedPatientId
-     *      [3] emergencyAccessHash (unique per event)
-     *      [4] justificationCommitment
-     *      [5] currentTimestamp (public input)
-     *      [6] accessEventHash (public input)
-     *      [7] emergencyThreshold (public input)
-     *      [8] credentialsMerkleRoot (public input, verified against on-chain registry)
+     * @dev BreakGlass V2 circuit uses this public signal layout:
+     *      [0] currentTimestamp
+     *      [1] accessEventHash
+     *      [2] emergencyThreshold
+     *      [3] credentialsMerkleRoot
+     *      [4] isValid
+     *      [5] blindedClinicianId
+     *      [6] blindedPatientId
+     *      [7] emergencyAccessHash
+     *      [8] justificationCommitment
+     *      For compatibility, the previously documented "new layout" is also accepted:
+     *      [0] isValid, [1] blindedClinicianId, [2] blindedPatientId, [3] emergencyAccessHash,
+     *      [4] justificationCommitment, [5] currentTimestamp, [6] accessEventHash,
+     *      [7] emergencyThreshold, [8] credentialsMerkleRoot.
      * @param _pA Proof element A
      * @param _pB Proof element B
      * @param _pC Proof element C
@@ -235,26 +264,32 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
         }
 
         // 2. Validate Public Signals
-        // Signal 0 = isValid (must be 1)
-        if (_pubSignals[0] != 1) revert InvalidProof();
+        bool legacyLayout;
+        if (_pubSignals[4] == 1) {
+            legacyLayout = true;
+        } else if (_pubSignals[0] == 1) {
+            legacyLayout = false;
+        } else {
+            revert InvalidProof();
+        }
 
-        // Signal 7 = emergencyThreshold from proof must meet our required threshold
-        uint256 proofThreshold = _pubSignals[7];
+        // emergencyThreshold from proof must meet our required threshold
+        uint256 proofThreshold = legacyLayout ? _pubSignals[2] : _pubSignals[7];
         if (proofThreshold < requiredThreshold) {
             revert EmergencyThresholdNotMet(proofThreshold, requiredThreshold);
         }
 
-        // Signal 8 = credentialsMerkleRoot - verify against on-chain registry
+        // credentialsMerkleRoot - verify against on-chain registry
         if (address(credentialRegistry) != address(0)) {
             bytes32 onChainRoot = credentialRegistry.getMerkleRoot();
-            bytes32 proofRoot = bytes32(_pubSignals[8]);
+            bytes32 proofRoot = bytes32(legacyLayout ? _pubSignals[3] : _pubSignals[8]);
             if (onChainRoot != proofRoot) {
                 revert InvalidProof(); // Merkle root mismatch
             }
         }
 
-        // Signal 5 = currentTimestamp
-        uint256 proofTimestamp = _pubSignals[5];
+        // currentTimestamp
+        uint256 proofTimestamp = legacyLayout ? _pubSignals[0] : _pubSignals[5];
         if (
             proofTimestamp > block.timestamp + TIMESTAMP_THRESHOLD ||
             proofTimestamp < block.timestamp - TIMESTAMP_THRESHOLD
@@ -262,8 +297,8 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
             revert InvalidTimestamp(proofTimestamp, block.timestamp);
         }
 
-        // Signal 3 = emergencyAccessHash (used as nullifier for replay protection)
-        uint256 emergencyNullifier = _pubSignals[3];
+        // emergencyAccessHash (used as nullifier for replay protection)
+        uint256 emergencyNullifier = legacyLayout ? _pubSignals[7] : _pubSignals[3];
         if (usedNullifiers[emergencyNullifier]) revert NullifierAlreadyUsed();
 
         // 3. Verify Proof
@@ -274,20 +309,23 @@ contract ZKGuardianAudit is Initializable, UUPSUpgradeable, AccessControlUpgrade
         // 4. Update State
         verifiedProofs[proofHash] = true;
         usedNullifiers[emergencyNullifier] = true;
-        bytes32 accessEventHash = bytes32(_pubSignals[6]);
+        bytes32 accessEventHash = bytes32(legacyLayout ? _pubSignals[1] : _pubSignals[6]);
         accessTimestamps[accessEventHash] = uint64(block.timestamp);
+
+        uint256 blindedClinicianId = legacyLayout ? _pubSignals[5] : _pubSignals[1];
+        uint256 blindedPatientId = legacyLayout ? _pubSignals[6] : _pubSignals[2];
+        uint256 justificationCommitment = legacyLayout ? _pubSignals[8] : _pubSignals[4];
 
         // 5. Emit Event
         emit EmergencyAccessAudited(
             bytes32(emergencyNullifier), // emergencyAccessHash
             proofHash,
-            _pubSignals[1], // blindedClinicianId
-            _pubSignals[2], // blindedPatientId
+            blindedClinicianId,
+            blindedPatientId,
             proofThreshold, // emergencyCode
-            _pubSignals[4], // justificationCommitment
+            justificationCommitment,
             uint64(block.timestamp),
             msg.sender
         );
     }
 }
-

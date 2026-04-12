@@ -21,7 +21,7 @@ export interface ComplianceReport {
     summary: {
         totalAccessRequests: number;
         granted: number; // Derived from AuditLog (successful access)
-        denied: number;  // Currently tracked via SystemEvents or logs (placeholder 0)
+        denied: number;  // Derived from failed audit rows and denial webhook events
         breakGlassCount: number;
     };
     breakGlassAnalysis: {
@@ -54,7 +54,9 @@ export class ComplianceReportService {
         // AuditLog tracks successful (verified) accesses
         const [
             granted,
-            breakGlass
+            breakGlass,
+            deniedAuditRows,
+            deniedWebhookEvents
         ] = await Promise.all([
             prisma.auditLog.count({ where: { createdAt: { gte: startDate, lte: endDate } } }),
             prisma.auditLog.findMany({
@@ -62,12 +64,23 @@ export class ComplianceReportService {
                     createdAt: { gte: startDate, lte: endDate },
                     isBreakGlass: true
                 }
+            }),
+            prisma.auditLog.count({
+                where: {
+                    createdAt: { gte: startDate, lte: endDate },
+                    verified: false
+                }
+            }),
+            prisma.webhookDelivery.count({
+                where: {
+                    createdAt: { gte: startDate, lte: endDate },
+                    eventType: { in: ['access.denied', 'consent.denied'] }
+                }
             })
         ]);
 
-        // Access denied would require querying SystemEvents or specific logs
-        // For now, we assume AuditLog contains valid access
-        const denied = 0;
+        // We take the max to avoid double-counting when both mechanisms are enabled.
+        const denied = Math.max(deniedAuditRows, deniedWebhookEvents);
         const totalAccess = granted + denied;
 
         // Break-glass analysis

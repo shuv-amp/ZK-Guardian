@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { prisma } from '../db/client.js';
 import { logger } from '../lib/logger.js';
 import { validateBody } from '../middleware/validation.js';
+import { env } from '../config/env.js';
 
 export const patientPreferencesRouter: Router = Router();
 
@@ -169,7 +170,13 @@ export async function checkAccessRestrictions(patientId: string): Promise<{
 
     } catch (error) {
         logger.error({ error, patientId }, 'Failed to check access restrictions');
-        // Fail open for now, but log the error
+        // Fail closed in production to avoid bypassing patient restrictions.
+        if (env.NODE_ENV === 'production') {
+            return {
+                allowed: false,
+                reason: 'Preference check failed'
+            };
+        }
         return { allowed: true };
     }
 }
@@ -186,8 +193,8 @@ export async function isBreakGlassAllowed(patientId: string): Promise<boolean> {
 
     } catch (error) {
         logger.error({ error, patientId }, 'Failed to check break-glass permission');
-        // Fail open for emergencies
-        return true;
+        // Keep emergency-friendly behavior outside production; fail closed in production.
+        return env.NODE_ENV !== 'production';
     }
 }
 

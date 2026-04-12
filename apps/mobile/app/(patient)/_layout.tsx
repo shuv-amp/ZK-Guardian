@@ -15,6 +15,13 @@ import { useEffect } from 'react';
 export default function PatientLayout() {
     const { isLoading, isAuthenticated, patientId, practitionerId, accessToken } = useAuth();
 
+    // Sync push token with backend
+    useEffect(() => {
+        if (isAuthenticated && accessToken && patientId) {
+            PushNotificationService.syncTokenWithBackend(accessToken, config.GATEWAY_URL);
+        }
+    }, [isAuthenticated, accessToken, patientId]);
+
     // Show loading while auth state is being determined
     if (isLoading) {
         return (
@@ -34,17 +41,11 @@ export default function PatientLayout() {
         return <Redirect href="/(clinician)/dashboard" />;
     }
 
-    // Sync push token with backend
-    useEffect(() => {
-        if (isAuthenticated && accessToken && patientId) {
-            PushNotificationService.syncTokenWithBackend(accessToken, config.GATEWAY_URL);
-        }
-    }, [isAuthenticated, accessToken, patientId]);
-
     // Render patient screens
     return (
         <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="dashboard" />
+            <Stack.Screen name="access-history" />
             <Stack.Screen name="consents" />
             <Stack.Screen name="alerts" />
             <Stack.Screen name="settings" />

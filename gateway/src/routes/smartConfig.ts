@@ -7,22 +7,67 @@
 
 import { Router } from 'express';
 import { env } from '../config/env.js';
+import { getSmartKeys } from '../lib/smartKeys.js';
 
 export const smartConfigRouter: Router = Router();
 
+smartConfigRouter.get('/jwks.json', async (_req, res) => {
+    if (env.SMART_AUTH_MODE !== 'local') {
+        return res.status(404).json({
+            error: 'LOCAL_SMART_AUTH_DISABLED',
+            message: 'JWKS is managed by the external authorization server'
+        });
+    }
+
+    try {
+        const { publicJwk, kid } = await getSmartKeys();
+
+        res.json({
+            keys: [
+                {
+                    ...publicJwk,
+                    kid,
+                    use: 'sig',
+                    alg: 'RS256'
+                }
+            ]
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: 'JWKS_UNAVAILABLE', message: error.message });
+    }
+});
+
 smartConfigRouter.get('/smart-configuration', (req, res) => {
-    // If SMART_ISSUER is not set, dynamically determine it from the request headers
-    // This ensures it works for localhost, 10.0.2.2 (Android), and other network configurations
     const protocol = req.protocol;
     const host = req.get('host');
     const issuer = env.SMART_ISSUER || `${protocol}://${host}`;
+    const isExternalAuth = env.SMART_AUTH_MODE === 'external';
+
+    const authorizationEndpoint = isExternalAuth
+        ? env.SMART_AUTHORIZATION_ENDPOINT
+        : `${issuer}/oauth/authorize`;
+    const tokenEndpoint = isExternalAuth
+        ? env.SMART_TOKEN_ENDPOINT
+        : `${issuer}/oauth/token`;
+    const introspectionEndpoint = isExternalAuth
+        ? env.SMART_INTROSPECTION_ENDPOINT
+        : `${issuer}/oauth/introspect`;
+    const revocationEndpoint = isExternalAuth
+        ? env.SMART_REVOCATION_ENDPOINT
+        : `${issuer}/oauth/revoke`;
+    const jwksUri = isExternalAuth
+        ? env.SMART_JWKS_URI
+        : `${issuer}/.well-known/jwks.json`;
 
     res.json({
-        authorization_endpoint: `${issuer}/oauth/authorize`,
-        token_endpoint: `${issuer}/oauth/token`,
-        introspection_endpoint: `${issuer}/oauth/introspect`,
-        revocation_endpoint: `${issuer}/oauth/revoke`,
+        issuer,
+        authorization_endpoint: authorizationEndpoint,
+        token_endpoint: tokenEndpoint,
+        introspection_endpoint: introspectionEndpoint,
+        revocation_endpoint: revocationEndpoint,
+        jwks_uri: jwksUri,
         token_endpoint_auth_methods_supported: [
+            'none',
             'client_secret_basic',
             'client_secret_post',
             'private_key_jwt'
