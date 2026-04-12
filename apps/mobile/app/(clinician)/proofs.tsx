@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { config } from '../../config/env';
+import { authorizedFetch } from '../../services/API';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../constants/Theme';
 
 /**
@@ -42,7 +43,7 @@ const STATUS_CONFIG = {
 };
 
 export default function ProofsScreen() {
-    const { accessToken, practitionerId } = useAuth();
+    const { practitionerId } = useAuth();
     const [proofs, setProofs] = useState<ProofRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -57,11 +58,10 @@ export default function ProofsScreen() {
         try {
             if (!practitionerId || !accessToken) return;
 
-            const response = await fetch(
+            const response = await authorizedFetch(
                 `${config.GATEWAY_URL}/api/clinician/${practitionerId}/proofs?limit=20`,
                 {
                     headers: {
-                        'Authorization': `Bearer ${accessToken}`,
                         'Content-Type': 'application/json'
                     }
                 }

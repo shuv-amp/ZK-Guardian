@@ -120,6 +120,19 @@ describe('Validation Schemas', () => {
             expect(() => ConsentResponseSchema.parse(approval)).not.toThrow();
         });
 
+        it('should normalize raw hex consent fields during migration', () => {
+            const approval = ConsentResponseSchema.parse({
+                type: 'CONSENT_RESPONSE',
+                requestId: '550e8400-e29b-41d4-a716-446655440000',
+                approved: true,
+                nullifier: '123abc',
+                sessionNonce: 'abcdef'
+            });
+
+            expect(approval.nullifier).toBe('0x123abc');
+            expect(approval.sessionNonce).toBe('0xabcdef');
+        });
+
         it('should accept valid consent denial', () => {
             const denial = {
                 type: 'CONSENT_RESPONSE',
@@ -135,6 +148,16 @@ describe('Validation Schemas', () => {
                 requestId: '550e8400-e29b-41d4-a716-446655440000',
                 approved: true,
                 nullifier: 'invalid-not-hex'
+            };
+            expect(() => ConsentResponseSchema.parse(invalid)).toThrow();
+        });
+
+        it('should reject invalid session nonce format', () => {
+            const invalid = {
+                type: 'CONSENT_RESPONSE',
+                requestId: '550e8400-e29b-41d4-a716-446655440000',
+                approved: true,
+                sessionNonce: 'not-a-field'
             };
             expect(() => ConsentResponseSchema.parse(invalid)).toThrow();
         });

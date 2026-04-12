@@ -1,4 +1,5 @@
 import { smartAuth } from './SMARTAuthService';
+import { secureFetch } from '../utils/secureFetch';
 
 /**
  * Custom error class for API issues
@@ -40,7 +41,7 @@ export async function authorizedFetch(url: string, options: RequestInit = {}): P
     }
 
     // 2. Initial attempt
-    let response = await fetch(url, {
+    let response = await secureFetch(url, {
         ...options,
         headers,
     });
@@ -57,7 +58,7 @@ export async function authorizedFetch(url: string, options: RequestInit = {}): P
             if (newToken) {
                 console.log('[API] Token refreshed, retrying request...');
                 headers.set('Authorization', `Bearer ${newToken}`);
-                response = await fetch(url, {
+                response = await secureFetch(url, {
                     ...options,
                     headers,
                 });

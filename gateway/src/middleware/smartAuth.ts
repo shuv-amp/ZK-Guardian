@@ -13,6 +13,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
+import { createHash } from 'crypto';
 import { createRemoteJWKSet, jwtVerify, JWTPayload, JWTVerifyResult } from 'jose';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
@@ -53,6 +54,8 @@ interface CachedJWKS {
 // Cache JWKS for 1 hour to reduce network calls
 const jwksCache = new Map<string, CachedJWKS>();
 const JWKS_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const introspectionCache = new Map<string, { active: boolean; expiresAt: number }>();
+const INTROSPECTION_CACHE_TTL_MS = 15_000;
 
 /**
  * Get or create JWKS function for issuer
@@ -89,6 +92,122 @@ function getJWKS(issuer: string): ReturnType<typeof createRemoteJWKSet> {
     });
 
     return jwks;
+}
+
+function getTokenCacheKey(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+}
+
+function hasAudience(audience: unknown, expectedAudience: string): boolean {
+    if (!audience || !expectedAudience) return true;
+
+    if (typeof audience === 'string') {
+        return audience === expectedAudience;
+    }
+
+    if (Array.isArray(audience)) {
+        return audience.includes(expectedAudience);
+    }
+
+    return false;
+}
+
+async function assertExternalTokenActive(token: string, claims: JWTPayload): Promise<void> {
+    if (env.SMART_AUTH_MODE !== 'external') {
+        return;
+    }
+
+    if (!env.SMART_INTROSPECTION_ENDPOINT) {
+        if (env.NODE_ENV === 'production') {
+            throw new TokenValidationError('INTROSPECTION_NOT_CONFIGURED', 'External token introspection is required in production');
+        }
+
+        logger.warn('SMART_INTROSPECTION_ENDPOINT not configured; skipping external token revocation checks');
+        return;
+    }
+
+    const cacheKey = getTokenCacheKey(token);
+    const cached = introspectionCache.get(cacheKey);
+    const now = Date.now();
+
+    if (cached && cached.expiresAt > now) {
+        if (!cached.active) {
+            throw new TokenValidationError('TOKEN_REVOKED', 'Access token is inactive or revoked');
+        }
+        return;
+    }
+
+    const body = new URLSearchParams({
+        token,
+        token_type_hint: 'access_token'
+    });
+
+    const headers: Record<string, string> = {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    };
+
+    if (env.SMART_CLIENT_ID && env.SMART_CLIENT_SECRET) {
+        headers.Authorization = `Basic ${Buffer.from(`${env.SMART_CLIENT_ID}:${env.SMART_CLIENT_SECRET}`).toString('base64')}`;
+    } else {
+        if (env.SMART_CLIENT_ID) {
+            body.set('client_id', env.SMART_CLIENT_ID);
+        }
+        if (env.SMART_CLIENT_SECRET) {
+            body.set('client_secret', env.SMART_CLIENT_SECRET);
+        }
+    }
+
+    const response = await fetch(env.SMART_INTROSPECTION_ENDPOINT, {
+        method: 'POST',
+        headers,
+        body: body.toString()
+    });
+
+    if (!response.ok) {
+        throw new TokenValidationError(
+            'INTROSPECTION_FAILED',
+            `External introspection failed with HTTP ${response.status}`
+        );
+    }
+
+    const introspection = await response.json() as {
+        active?: boolean;
+        exp?: number;
+        iss?: string;
+        aud?: string | string[];
+    };
+
+    const expMs = typeof introspection.exp === 'number' ? introspection.exp * 1000 : undefined;
+    const cacheTtl = expMs
+        ? Math.max(1_000, Math.min(INTROSPECTION_CACHE_TTL_MS, expMs - now))
+        : INTROSPECTION_CACHE_TTL_MS;
+
+    introspectionCache.set(cacheKey, {
+        active: introspection.active === true,
+        expiresAt: now + cacheTtl
+    });
+
+    if (!introspection.active) {
+        throw new TokenValidationError('TOKEN_REVOKED', 'Access token is inactive or revoked');
+    }
+
+    if (expMs !== undefined && expMs <= now) {
+        throw new TokenValidationError('TOKEN_EXPIRED', 'Access token has expired');
+    }
+
+    if (env.SMART_ISSUER && introspection.iss && introspection.iss !== env.SMART_ISSUER) {
+        throw new TokenValidationError('INVALID_ISSUER', `Issuer ${introspection.iss} not allowed`);
+    }
+
+    const expectedAudience = env.SMART_AUDIENCE || env.HAPI_FHIR_URL;
+    if (expectedAudience && !hasAudience(introspection.aud, expectedAudience)) {
+        throw new TokenValidationError('INVALID_AUDIENCE', `Audience ${String(introspection.aud)} not allowed`);
+    }
+
+    if (!claims.jti && env.NODE_ENV === 'production') {
+        logger.warn('Token introspection succeeded without jti claim');
+    }
 }
 
 // Token Validation
@@ -144,7 +263,9 @@ async function validateToken(token: string): Promise<SMARTContext> {
 
     const claims = result.payload;
 
-    if (await isTokenRevoked(claims.jti as string | undefined)) {
+    if (env.SMART_AUTH_MODE === 'external') {
+        await assertExternalTokenActive(token, claims);
+    } else if (await isTokenRevoked(claims.jti as string | undefined)) {
         throw new TokenValidationError('TOKEN_REVOKED', 'Access token has been revoked');
     }
 

@@ -13,7 +13,7 @@ let SecureStoreNative: any = null;
 if (Platform.OS !== 'web') {
     try {
         SecureStoreNative = require('expo-secure-store');
-    } catch (e) {
+    } catch {
         console.warn('[SecureStorage] expo-secure-store not available');
     }
 }
@@ -23,10 +23,14 @@ if (Platform.OS !== 'web') {
  */
 export async function getItemAsync(key: string): Promise<string | null> {
     if (Platform.OS === 'web') {
+        if (!__DEV__) {
+            console.error('[SecureStorage] Web storage is disabled outside development');
+            return null;
+        }
         // Web fallback - localStorage (NOT secure, development only)
         try {
             return localStorage.getItem(key);
-        } catch (e) {
+        } catch {
             console.warn('[SecureStorage] localStorage not available');
             return null;
         }
@@ -44,10 +48,13 @@ export async function getItemAsync(key: string): Promise<string | null> {
  */
 export async function setItemAsync(key: string, value: string): Promise<void> {
     if (Platform.OS === 'web') {
+        if (!__DEV__) {
+            throw new Error('Web storage is disabled outside development');
+        }
         // Web fallback - localStorage (NOT secure, development only)
         try {
             localStorage.setItem(key, value);
-        } catch (e) {
+        } catch {
             console.warn('[SecureStorage] localStorage not available');
         }
         return;
@@ -64,10 +71,13 @@ export async function setItemAsync(key: string, value: string): Promise<void> {
  */
 export async function deleteItemAsync(key: string): Promise<void> {
     if (Platform.OS === 'web') {
+        if (!__DEV__) {
+            return;
+        }
         // Web fallback
         try {
             localStorage.removeItem(key);
-        } catch (e) {
+        } catch {
             console.warn('[SecureStorage] localStorage not available');
         }
         return;

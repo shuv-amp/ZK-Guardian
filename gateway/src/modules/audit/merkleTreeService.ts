@@ -69,6 +69,11 @@ export class MerkleTreeService {
         return this.getRoot();
     }
 
+    hasCredential(credentialHash: bigint): boolean {
+        if (!this.initialized) throw new Error('MerkleTreeService not initialized');
+        return this.leafToIndex.has(credentialHash);
+    }
+
     /**
      * Get the current Merkle Root
      */

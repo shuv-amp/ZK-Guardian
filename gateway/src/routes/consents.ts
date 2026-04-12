@@ -14,6 +14,7 @@ import { ethers } from 'ethers';
 import { prisma } from '../db/client.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
+import { getGatewayPrivateKey } from '../config/secrets.js';
 import { validateQuery, validateBody } from '../middleware/validation.js';
 import { hashFhirConsent } from '../utils/fhirToPoseidon.js';
 import { webhookService } from '../modules/notification/webhookService.js';
@@ -377,10 +378,11 @@ consentsRouter.post('/:consentId/revoke', validateBody(RevokeConsentSchema), asy
         );
 
         // Blockchain Revocation. Making it official.
-        if (env.POLYGON_AMOY_RPC && env.GATEWAY_PRIVATE_KEY && env.CONSENT_REVOCATION_REGISTRY_ADDRESS) {
+        if (env.POLYGON_AMOY_RPC && env.CONSENT_REVOCATION_REGISTRY_ADDRESS) {
             try {
+                const privateKey = await getGatewayPrivateKey();
                 const provider = new ethers.JsonRpcProvider(env.POLYGON_AMOY_RPC);
-                const wallet = new ethers.Wallet(env.GATEWAY_PRIVATE_KEY, provider);
+                const wallet = new ethers.Wallet(privateKey, provider);
 
                 const contract = new ethers.Contract(
                     env.CONSENT_REVOCATION_REGISTRY_ADDRESS,

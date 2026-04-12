@@ -76,6 +76,22 @@ class SecretsManager {
         logger.info('Secrets manager initialized');
     }
 
+    isInitialized(): boolean {
+        return this.initialized;
+    }
+
+    getBackendName(): 'vault' | 'aws-secrets-manager' | 'env' {
+        if (process.env.VAULT_ADDR && process.env.VAULT_TOKEN) {
+            return 'vault';
+        }
+
+        if (process.env.AWS_REGION && (process.env.AWS_SECRET_ID || process.env.AWS_SECRETS_PREFIX)) {
+            return 'aws-secrets-manager';
+        }
+
+        return 'env';
+    }
+
     /**
      * Get a secret value
      * Returns the decrypted value or throws if not found
@@ -370,4 +386,11 @@ export async function initializeSecrets(): Promise<void> {
     if (balance.isLow && env.NODE_ENV === 'production') {
         logger.warn({ balance }, 'Gateway wallet balance is low - transactions may fail');
     }
+}
+
+export function getSecretsManagerStatus(): { initialized: boolean; backend: string } {
+    return {
+        initialized: secretsManager.isInitialized(),
+        backend: secretsManager.getBackendName()
+    };
 }

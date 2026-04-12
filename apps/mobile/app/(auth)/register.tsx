@@ -33,8 +33,6 @@ export default function RegisterScreen() {
     const [selectedRole, setSelectedRole] = useState<UserRole>('patient');
     const [loading, setLoading] = useState(false);
     const [formData, setFormData] = useState({
-        email: '',
-        fullName: '',
         organizationId: '', // For clinicians
         licenseNumber: '', // For clinicians
     });
@@ -42,21 +40,6 @@ export default function RegisterScreen() {
 
     const validateForm = (): boolean => {
         const newErrors: { [key: string]: string } = {};
-
-        // Email validation
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!formData.email.trim()) {
-            newErrors.email = 'Email is required';
-        } else if (!emailRegex.test(formData.email)) {
-            newErrors.email = 'Please enter a valid email';
-        }
-
-        // Full name validation
-        if (!formData.fullName.trim()) {
-            newErrors.fullName = 'Full name is required';
-        } else if (formData.fullName.trim().length < 2) {
-            newErrors.fullName = 'Name must be at least 2 characters';
-        }
 
         // Organization ID for clinicians
         if (selectedRole === 'clinician' && !formData.organizationId.trim()) {
@@ -204,43 +187,14 @@ export default function RegisterScreen() {
 
                     {/* Form Fields */}
                     <View style={styles.formContainer}>
-                        {/* Full Name */}
-                        <View style={styles.inputGroup}>
-                            <Text style={styles.inputLabel}>Full Name</Text>
-                            <View style={[styles.inputWrapper, errors.fullName && styles.inputError]}>
-                                <Ionicons name="person-outline" size={20} color={COLORS.textSecondary} />
-                                <TextInput
-                                    style={styles.input}
-                                    placeholder="Enter your full name"
-                                    placeholderTextColor={COLORS.textLight}
-                                    value={formData.fullName}
-                                    onChangeText={(text) => setFormData({ ...formData, fullName: text })}
-                                    autoCapitalize="words"
-                                    editable={!loading}
-                                />
+                        {selectedRole === 'patient' && (
+                            <View style={styles.identityNotice}>
+                                <Ionicons name="id-card-outline" size={20} color={COLORS.primary} />
+                                <Text style={styles.identityNoticeText}>
+                                    Your patient identity comes from the SMART login and linked FHIR profile. No extra profile fields are collected here.
+                                </Text>
                             </View>
-                            {errors.fullName && <Text style={styles.errorText}>{errors.fullName}</Text>}
-                        </View>
-
-                        {/* Email */}
-                        <View style={styles.inputGroup}>
-                            <Text style={styles.inputLabel}>Email Address</Text>
-                            <View style={[styles.inputWrapper, errors.email && styles.inputError]}>
-                                <Ionicons name="mail-outline" size={20} color={COLORS.textSecondary} />
-                                <TextInput
-                                    style={styles.input}
-                                    placeholder="you@example.com"
-                                    placeholderTextColor={COLORS.textLight}
-                                    value={formData.email}
-                                    onChangeText={(text) => setFormData({ ...formData, email: text })}
-                                    keyboardType="email-address"
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                    editable={!loading}
-                                />
-                            </View>
-                            {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
-                        </View>
+                        )}
 
                         {/* Facility ID (Clinicians only) */}
                         {selectedRole === 'clinician' && (
@@ -415,6 +369,22 @@ const styles = StyleSheet.create({
     },
     inputGroup: {
         marginBottom: SPACING.m,
+    },
+    identityNotice: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: COLORS.primaryLight,
+        borderRadius: RADIUS.l,
+        padding: SPACING.m,
+        marginBottom: SPACING.m,
+    },
+    identityNoticeText: {
+        flex: 1,
+        marginLeft: SPACING.s,
+        color: COLORS.text,
+        ...FONTS.regular,
+        fontSize: 14,
+        lineHeight: 20,
     },
     inputLabel: {
         fontSize: 14,

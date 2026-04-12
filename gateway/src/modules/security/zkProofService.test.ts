@@ -5,6 +5,16 @@ import axios from 'axios';
 // Mock Axios to avoid real network calls to HAPI FHIR
 vi.mock('axios');
 
+const mockConsentCacheFindMany = vi.fn().mockResolvedValue([]);
+
+vi.mock('../../db/client.js', () => ({
+    prisma: {
+        consentCache: {
+            findMany: (...args: any[]) => mockConsentCacheFindMany(...args)
+        }
+    }
+}));
+
 // Define constants locally for the test (needed for path resolution even if mocked, though service uses internal path)
 import path from 'path';
 const CIRCUITS_BUILD_DIR = path.resolve(__dirname, "../../../circuits/build");

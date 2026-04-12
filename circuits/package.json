@@ -5,6 +5,7 @@
     "description": "ZK Guardian Circom circuits",
     "license": "Apache-2.0",
     "scripts": {
+        "pretest": "bash scripts/ensure-artifacts.sh",
         "compile": "bash scripts/compile-all.sh",
         "setup": "bash scripts/setup-all.sh",
         "trusted-setup": "bash scripts/setup-all.sh",

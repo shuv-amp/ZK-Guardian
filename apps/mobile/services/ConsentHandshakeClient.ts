@@ -75,12 +75,12 @@ export class ConsentHandshakeClient {
 
         this.updateState('connecting');
 
-        const wsUrl = `${config.WS_URL}?patientId=${encodeURIComponent(this.patientId)}`;
+        const wsUrl = config.WS_URL;
 
         console.log('[ConsentClient] Connecting to:', wsUrl);
 
         try {
-            this.attachSocket(wsUrl);
+            void this.attachSocket(wsUrl);
         } catch (error) {
             console.error('[ConsentClient] Failed to create WebSocket:', error);
             this.updateState('error');
@@ -90,9 +90,17 @@ export class ConsentHandshakeClient {
 
     private async attachSocket(baseUrl: string) {
         const token = await this.getStoredAccessToken();
-        const wsUrl = token ? `${baseUrl}&access_token=${encodeURIComponent(token)}` : baseUrl;
+        if (!token) {
+            console.warn('[ConsentClient] Missing access token for WebSocket auth');
+            this.updateState('error');
+            return;
+        }
 
-        this.socket = new WebSocket(wsUrl);
+        this.socket = new WebSocket(baseUrl, undefined, {
+            headers: {
+                Authorization: `Bearer ${token}`
+            }
+        });
 
         this.socket.onopen = () => {
             console.log('[ConsentClient] Connected');
@@ -146,9 +154,7 @@ export class ConsentHandshakeClient {
 
             switch (message.type) {
                 case 'AUTH_CHALLENGE':
-                    // Gateway is asking us to authenticate
-                    console.log('[ConsentClient] Received AUTH_CHALLENGE');
-                    this.handleAuthChallenge(message.challenge);
+                    console.warn('[ConsentClient] AUTH_CHALLENGE no longer supported');
                     break;
 
                 case 'AUTH_SUCCESS':
@@ -158,10 +164,7 @@ export class ConsentHandshakeClient {
 
                 case 'AUTH_REQUIRED':
                     console.warn('[ConsentClient] Auth required:', message.message);
-                    // Re-trigger authentication
-                    if (message.challenge) {
-                        this.handleAuthChallenge(message.challenge);
-                    }
+                    this.updateState('error');
                     break;
 
                 case 'AUTH_FAILED':
@@ -180,56 +183,6 @@ export class ConsentHandshakeClient {
         } catch (error) {
             console.error('[ConsentClient] Failed to parse message:', error);
         }
-    }
-
-    /**
-     * Challenge Accepted!
-     * The gateway wants proof we are who we say we are.
-     * In prod, we'd sign this with a real private key. For now, a hash will do.
-     */
-    private async handleAuthChallenge(challenge: string) {
-        try {
-            // In development mode, use a simplified auth response
-            // In production, this should use proper cryptographic signing with patient's private key
-            const timestamp = Date.now();
-
-            // Simple hash-based signature (for development)
-            // In production: Use actual crypto signing with user's keypair
-            const signature = await this.signChallenge(challenge, timestamp);
-
-            const authResponse = {
-                type: 'AUTH_RESPONSE',
-                signature,
-                timestamp,
-            };
-
-            if (this.socket?.readyState === WebSocket.OPEN) {
-                this.socket.send(JSON.stringify(authResponse));
-                console.log('[ConsentClient] Sent AUTH_RESPONSE');
-            }
-        } catch (error) {
-            console.error('[ConsentClient] Failed to handle auth challenge:', error);
-        }
-    }
-
-    /**
-     * Signs a challenge for authentication.
-     * In development, uses a simple hash. In production, should use proper key-based signing.
-     */
-    private async signChallenge(challenge: string, timestamp: number): Promise<string> {
-        // Development: Create a simple deterministic signature
-        // Production: Use actual private key signing
-        const message = `${challenge}:${timestamp}:${this.patientId}`;
-
-        // Use a simple hash for now (crypto.subtle not available in RN by default)
-        // This is acceptable for development but should be replaced with proper signing
-        let hash = 0;
-        for (let i = 0; i < message.length; i++) {
-            const char = message.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash;
-        }
-        return `dev_sig_${Math.abs(hash).toString(16)}`;
     }
 
     private scheduleReconnect() {
@@ -274,8 +227,8 @@ export class ConsentHandshakeClient {
             const nullifier = await NullifierManager.getOrCreateNullifier();
             const sessionNonce = NullifierManager.generateSessionNonce();
 
-            payload.nullifier = nullifier.toString();
-            payload.sessionNonce = sessionNonce.toString();
+            payload.nullifier = `0x${nullifier.toString(16)}`;
+            payload.sessionNonce = `0x${sessionNonce.toString(16)}`;
         }
 
         this.socket.send(JSON.stringify(payload));

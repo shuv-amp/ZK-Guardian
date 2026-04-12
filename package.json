@@ -9,6 +9,7 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "test": "turbo run test",
+    "verify:fresh-checkout": "pnpm contracts:compile && pnpm circuits:setup && pnpm --filter gateway build && pnpm contracts:test && pnpm --filter gateway test && pnpm --filter circuits test",
     "lint": "turbo run lint",
     "clean": "turbo run clean && rm -rf node_modules",
     "circuits:compile": "pnpm --filter circuits run compile",

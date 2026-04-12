@@ -111,9 +111,9 @@ pnpm contracts:test
 │ Mobile App   │◄──►│  ZK Gateway      │◄──►│  HAPI FHIR      │
 │ (Expo)       │    │  (Node.js)       │    │  (Java)         │
 │              │    │                  │    │                 │
-│ • Consent    │    │ • SMART Auth     │    │ • Patient data  │
+│ • Consent    │    │ • SMART Validate │    │ • Patient data  │
 │   approval   │    │ • ZK Proofs      │    │ • Consent       │
-│ • Audit view │    │ • Batch audit    │    │ • Observations  │
+│ • Audit view │    │ • Direct audit   │    │ • Observations  │
 └──────────────┘    └────────┬─────────┘    └─────────────────┘
                              │
                     ┌────────▼─────────┐
@@ -130,17 +130,19 @@ pnpm contracts:test
 - **Zero PII on-chain**: Only hashes and proofs
 - **Nullifier protection**: Prevents brute-force attacks
 - **HIPAA compliant**: Break-glass, audit trails, encryption
-- **SMART on FHIR**: OAuth 2.0 authentication
+- **SMART on FHIR**: external OAuth 2.0 / OIDC authentication with gateway-side validation
 
 ## ✅ Production Readiness
 
 Before production deployment, ensure the following are complete:
 
-- SMART OAuth keys stored in a secrets manager.
+- External SMART/OIDC issuer, JWKS, introspection endpoint, and client credentials configured.
+- Gateway signing key stored in a secrets manager.
 - Circuit artifacts pinned with checksums.
 - Contract addresses verified and recorded.
-- CI pipeline green on `main`.
-- Runbook validation for /health and /ready endpoints.
+- Mobile production builds configured for HTTPS/WSS only with `TLS_PIN_MAP`.
+- GitHub Actions `Production Verification` workflow green.
+- Runbook validation for `/health` and `/ready` endpoints.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](SECURITY.md) for full requirements.
 

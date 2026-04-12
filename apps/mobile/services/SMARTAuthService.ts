@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from '../utils/SecureStorage';
 import { config, isBackendConfigured } from '../config/env';
+import { secureFetch } from '../utils/secureFetch';
 
 // Required for Expo AuthSession
 WebBrowser.maybeCompleteAuthSession();
@@ -87,7 +88,7 @@ export class SMARTAuthService {
             clinician_id: role === 'clinician' ? clinicianId : '',
         });
 
-        const authResponse = await fetch(`${config.GATEWAY_URL}/oauth/authorize-submit`, {
+        const authResponse = await secureFetch(`${config.GATEWAY_URL}/oauth/authorize-submit`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -224,7 +225,7 @@ export class SMARTAuthService {
             const configUrl = `${config.GATEWAY_URL}/.well-known/smart-configuration`;
             console.log(`[SMARTAuth] Fetching config from: ${configUrl}`);
 
-            const response = await fetch(configUrl);
+            const response = await secureFetch(configUrl);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status} fetching ${configUrl}`);
             }
@@ -270,7 +271,7 @@ export class SMARTAuthService {
 
             console.log('[SMARTAuth] Exchanging code for tokens at:', tokenUrl);
 
-            const response = await fetch(tokenUrl, {
+            const response = await secureFetch(tokenUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
@@ -335,15 +336,29 @@ export class SMARTAuthService {
         }
 
         try {
-            const response = await AuthSession.refreshAsync(
-                {
-                    clientId: 'zk-guardian-mobile',
-                    refreshToken: this.tokens.refreshToken,
-                },
-                this.discoveryDocument
-            );
+            const tokenUrl = this.discoveryDocument!.tokenEndpoint!;
+            const body = new URLSearchParams({
+                grant_type: 'refresh_token',
+                refresh_token: this.tokens.refreshToken,
+                client_id: 'zk-guardian-mobile',
+            });
 
-            return this.storeTokens(response as unknown as TokenResponse);
+            const response = await secureFetch(tokenUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: body.toString(),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[SMARTAuth] Refresh token request failed:', response.status, errorText);
+                return false;
+            }
+
+            const tokenResponse = await response.json();
+            return this.storeTokens(tokenResponse as TokenResponse);
         } catch (error) {
             console.error('[SMARTAuth] Token refresh failed:', error);
             // Do NOT auto-logout here. Fails can be network related.

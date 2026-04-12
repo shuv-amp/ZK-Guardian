@@ -111,9 +111,16 @@ const envSchema = z.object({
     GATEWAY_PRIVATE_KEY: z.string().optional(),
     CONSENT_REVOCATION_REGISTRY_ADDRESS: z.string().optional(),
     CREDENTIAL_REGISTRY_ADDRESS: z.string().optional(),
+    CIRCUIT_ARTIFACTS_DIR: z.string().optional(),
 
     // SMART on FHIR
+    SMART_AUTH_MODE: z.enum(['local', 'external']).optional(),
     SMART_ISSUER: optionalUrlFromEnv(),
+    SMART_AUTHORIZATION_ENDPOINT: optionalUrlFromEnv(),
+    SMART_TOKEN_ENDPOINT: optionalUrlFromEnv(),
+    SMART_INTROSPECTION_ENDPOINT: optionalUrlFromEnv(),
+    SMART_REVOCATION_ENDPOINT: optionalUrlFromEnv(),
+    SMART_JWKS_URI: optionalUrlFromEnv(),
     SMART_CLIENT_ID: z.string().optional(),
     SMART_CLIENT_SECRET: z.string().optional(),
     SMART_AUDIENCE: z.string().optional(),
@@ -144,11 +151,13 @@ const envSchema = z.object({
     // Circuit integrity checksums (optional, for production verification)
     CIRCUIT_WASM_SHA256: z.string().optional(),
     CIRCUIT_ZKEY_SHA256: z.string().optional(),
+    CIRCUIT_VKEY_SHA256: z.string().optional(),
 
     // Feature flags
     ENABLE_TRACING: booleanFromEnv(false),
     ENABLE_WORKER_POOL: booleanFromEnv(false),
-    ENABLE_SYNTHETIC_CONSENT: booleanFromEnv(false)
+    ENABLE_SYNTHETIC_CONSENT: booleanFromEnv(false),
+    ENABLE_BATCH_AUDIT: booleanFromEnv(false)
 });
 
 function loadEnv() {
@@ -168,19 +177,26 @@ function loadEnv() {
         return envSchema.parse({});
     }
 
+    const authMode = parsed.data.SMART_AUTH_MODE ||
+        (parsed.data.NODE_ENV === 'production' ? 'external' : 'local');
+    const data = {
+        ...parsed.data,
+        SMART_AUTH_MODE: authMode
+    };
+
     if (process.env.NODE_ENV !== 'production') {
         const redacted = {
-            ...parsed.data,
-            DATABASE_URL: parsed.data.DATABASE_URL ? '[redacted]' : undefined,
-            REDIS_URL: parsed.data.REDIS_URL ? '[redacted]' : undefined,
-            GATEWAY_PRIVATE_KEY: parsed.data.GATEWAY_PRIVATE_KEY ? '[redacted]' : undefined,
-            SMART_CLIENT_SECRET: parsed.data.SMART_CLIENT_SECRET ? '[redacted]' : undefined,
-            SMART_PRIVATE_JWK: parsed.data.SMART_PRIVATE_JWK ? '[redacted]' : undefined,
+            ...data,
+            DATABASE_URL: data.DATABASE_URL ? '[redacted]' : undefined,
+            REDIS_URL: data.REDIS_URL ? '[redacted]' : undefined,
+            GATEWAY_PRIVATE_KEY: data.GATEWAY_PRIVATE_KEY ? '[redacted]' : undefined,
+            SMART_CLIENT_SECRET: data.SMART_CLIENT_SECRET ? '[redacted]' : undefined,
+            SMART_PRIVATE_JWK: data.SMART_PRIVATE_JWK ? '[redacted]' : undefined,
         };
 
         console.log('[DEBUG] Loaded Env:', JSON.stringify(redacted, null, 2));
     }
-    return parsed.data;
+    return data;
 }
 
 export const env = loadEnv();

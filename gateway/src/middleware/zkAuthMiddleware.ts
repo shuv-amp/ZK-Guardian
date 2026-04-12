@@ -7,6 +7,7 @@ import { recordAccessEvent } from '../routes/patientAudit.js';
 import { getRedis } from '../db/redis.js';
 import { ethers } from 'ethers';
 import { env } from '../config/env.js';
+import { getGatewayPrivateKey } from '../config/secrets.js';
 import axios from 'axios';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
@@ -105,14 +106,13 @@ const sendTxWithNonceRetry = async (
  * Uses real tx in prod, mocks it in dev to save cash.
  */
 const submitToBlockchain = async (proofResult: any): Promise<{ txHash: string; blockNumber: number }> => {
-    const privateKey = env.GATEWAY_PRIVATE_KEY;
     const rpcUrl = env.POLYGON_AMOY_RPC;
     const auditAddress = env.AUDIT_CONTRACT_ADDRESS;
     const canUseDevMock = env.NODE_ENV !== 'production' && env.ALLOW_DEV_BYPASS;
 
     // Development fallback must be explicit.
     // If bypass is disabled, missing blockchain config is a hard error.
-    if (!privateKey || !rpcUrl || !auditAddress) {
+    if (!rpcUrl || !auditAddress) {
         if (canUseDevMock) {
             logger.warn({ auditAddress }, 'Blockchain not fully configured - using mock submission (ALLOW_DEV_BYPASS=true)');
             await new Promise(resolve => setTimeout(resolve, 50));
@@ -125,6 +125,7 @@ const submitToBlockchain = async (proofResult: any): Promise<{ txHash: string; b
     }
 
     try {
+        const privateKey = await getGatewayPrivateKey();
         const provider = new ethers.JsonRpcProvider(rpcUrl);
         const wallet = new ethers.Wallet(privateKey, provider);
         const contract = new ethers.Contract(auditAddress, ZK_GUARDIAN_AUDIT_ABI, wallet);

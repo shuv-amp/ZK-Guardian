@@ -6,6 +6,7 @@
 
 // @ts-ignore - snarkjs doesn't have types
 import * as snarkjs from 'snarkjs';
+import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { formatProofForSolidity } from './utils';
@@ -73,17 +74,28 @@ export class ProofGenerator {
         };
     }
 
+    private resolveArtifactsRoot(): string {
+        const directBuildRoot = join(this.circuitsPath, 'AccessIsAllowedSecure');
+        if (existsSync(directBuildRoot)) {
+            return this.circuitsPath;
+        }
+
+        return join(this.circuitsPath, 'build');
+    }
+
     /**
      * Load circuit artifacts
      */
     async loadCircuits(): Promise<void> {
         const circuits = ['AccessIsAllowed', 'AccessIsAllowedSecure', 'BreakGlass'];
+        const artifactsRoot = this.resolveArtifactsRoot();
 
         for (const circuit of circuits) {
             try {
-                const wasmPath = join(this.circuitsPath, `${circuit}_js/${circuit}.wasm`);
-                const zkeyPath = join(this.circuitsPath, `${circuit}_final.zkey`);
-                const vkeyPath = join(this.circuitsPath, `${circuit}_verification_key.json`);
+                const circuitDir = join(artifactsRoot, circuit);
+                const wasmPath = join(circuitDir, `${circuit}_js`, `${circuit}.wasm`);
+                const zkeyPath = join(circuitDir, `${circuit}_final.zkey`);
+                const vkeyPath = join(circuitDir, `${circuit}_verification_key.json`);
 
                 const [wasm, zkey, vkeyRaw] = await Promise.all([
                     readFile(wasmPath),
@@ -102,7 +114,7 @@ export class ProofGenerator {
                 }
             } catch (error) {
                 if (this.options.debug) {
-                    console.warn(`[ProofGenerator] Failed to load circuit ${circuit}:`, error);
+                    console.warn(`[ProofGenerator] Failed to load circuit ${circuit} from ${artifactsRoot}:`, error);
                 }
                 // Not all circuits may be built yet, this is OK
             }

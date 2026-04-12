@@ -3,6 +3,7 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import { secureFetch } from '../utils/secureFetch';
 
 export interface PushNotificationConfig {
     experienceId?: string;
@@ -104,7 +105,7 @@ export class PushNotificationService {
             const token = await this.getStoredToken();
             if (!token) return;
 
-            const response = await fetch(`${gatewayUrl}/api/patient/notifications/device-token`, {
+            const response = await secureFetch(`${gatewayUrl}/api/patient/notifications/device-token`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${accessToken}`,

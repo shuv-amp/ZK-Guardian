@@ -1,4 +1,5 @@
 import { buildPoseidon } from "circomlibjs";
+import { parseFieldElementInput } from "../lib/fieldEncoding.js";
 import crypto from "crypto";
 
 // --- Types ---
@@ -333,7 +334,7 @@ export async function prepareCircuitInputs({
         BigInt(patientFields[0]), BigInt(patientFields[1]), BigInt(patientFields[2]), BigInt(patientFields[3]),
         BigInt(resourceTypeFields[0]), BigInt(resourceTypeFields[1]), BigInt(resourceTypeFields[2]), BigInt(resourceTypeFields[3]),
         BigInt(timestamp),
-        BigInt(sessionNonce)
+        parseFieldElementInput(sessionNonce)
     ]));
 
     return {

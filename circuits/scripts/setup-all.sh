@@ -4,7 +4,7 @@ set -e
 
 CIRCUITS=("AccessIsAllowedSecure" "BreakGlass")
 PTAU_FILE="powersOfTau28_hez_final_14.ptau"
-PTAU_URL="https://hermez.s3-eu-west-1.amazonaws.com/${PTAU_FILE}"
+PTAU_URL="https://storage.googleapis.com/zkevm/ptau/${PTAU_FILE}"
 BUILD_DIR="build"
 
 echo "🔐 ZK Guardian Enterprise Trusted Setup"
@@ -13,13 +13,31 @@ echo "======================================"
 mkdir -p "${BUILD_DIR}"
 cd "$(dirname "$0")/.."
 
+ptau_size() {
+    stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null
+}
+
 # Step 1: Download Powers of Tau (Common for all)
 echo ""
 echo "📥 Step 1: Downloading Powers of Tau..."
+if [ -f "${BUILD_DIR}/${PTAU_FILE}" ]; then
+    CURRENT_SIZE=$(ptau_size "${BUILD_DIR}/${PTAU_FILE}")
+    if [ -z "${CURRENT_SIZE}" ] || [ "${CURRENT_SIZE}" -lt 1000000 ]; then
+        echo "⚠️  Cached PTAU file is invalid (${CURRENT_SIZE:-unknown} bytes). Re-downloading..."
+        rm -f "${BUILD_DIR}/${PTAU_FILE}"
+    fi
+fi
+
 if [ ! -f "${BUILD_DIR}/${PTAU_FILE}" ]; then
-    curl -L "${PTAU_URL}" -o "${BUILD_DIR}/${PTAU_FILE}"
+    curl -fL "${PTAU_URL}" -o "${BUILD_DIR}/${PTAU_FILE}"
 else
     echo "✅ ${PTAU_FILE} already exists"
+fi
+
+CURRENT_SIZE=$(ptau_size "${BUILD_DIR}/${PTAU_FILE}")
+if [ -z "${CURRENT_SIZE}" ] || [ "${CURRENT_SIZE}" -lt 1000000 ]; then
+    echo "❌ PTAU download looks invalid (${CURRENT_SIZE:-unknown} bytes)"
+    exit 1
 fi
 
 # Step 2: Process each circuit
@@ -32,9 +50,10 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
 
     # Compile
     echo "📐 Compiling..."
+    mkdir -p "${CIRCUIT_BUILD_DIR}"
     circom "${CIRCUIT}.circom" \
         --r1cs --wasm --sym \
-        --output $CIRCUIT_BUILD_DIR \
+        --output "${CIRCUIT_BUILD_DIR}" \
         -l node_modules \
         -l ../node_modules/circomlib/circuits
 
@@ -83,5 +102,9 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
 done
 
 echo ""
+echo "🧾 Generating checksums..."
+bash scripts/generate-checksums.sh
+
+echo ""
 echo "✅ All circuits setup complete!"
-echo "   Verifiers generated in ../contracts/contracts/"
+echo "   Verifiers generated in ../contracts/src/"

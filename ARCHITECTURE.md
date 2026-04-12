@@ -2,34 +2,37 @@
 
 ## Overview
 
-ZK Guardian is a privacy-preserving access audit system for healthcare data. It uses SMART on FHIR for authentication, ZK proofs for consent verification, and a blockchain audit log for tamper-evidence.
+ZK Guardian is a privacy-preserving access audit system for healthcare data. It uses an external SMART/OIDC authorization server for authentication, ZK proofs for consent verification, and a blockchain audit log for tamper-evidence.
 
 ## Components
 
 - **Mobile App (Expo)**: patient and clinician UX, consent prompts, identity onboarding.
-- **Gateway (Node.js + Express)**: SMART OAuth provider, FHIR proxy, ZK proof generation, audit batching.
+- **Gateway (Node.js + Express)**: SMART resource server, FHIR proxy, ZK proof generation, direct audit submission, and break-glass orchestration.
 - **Circuits (Circom)**: AccessIsAllowedSecure and BreakGlass proof logic.
 - **Contracts (Solidity)**: on-chain audit verification and revocation registries.
 - **FHIR Server (HAPI)**: patient data and consent source of truth.
 
 ## Data Flow
 
-1. User authenticates via SMART (OAuth2 + PKCE).
-2. Gateway validates token and establishes consent session over WebSocket.
-3. When access is requested, gateway generates a ZK proof using consent and nullifiers.
-4. Proof is verified on-chain and an audit event is emitted.
-5. Patients view access history via the gateway API.
+1. User authenticates via an external SMART/OIDC authorization server (OAuth2 + PKCE).
+2. Gateway validates issuer, audience, signature, expiry, and revocation before serving protected APIs.
+3. The mobile app opens `/ws/consent` with a bearer token, and the gateway derives patient identity from token claims.
+4. When access is requested, the gateway normalizes consent policy, generates a ZK proof, and submits `verifyAndAudit`.
+5. Patients and clinicians view audit/access state through the gateway API.
 
 ## Trust Boundaries
 
 - **Mobile App**: stores nullifier material in secure storage.
-- **Gateway**: holds signing keys and circuit artifacts; must run in a hardened environment.
+- **Gateway**: holds signing keys and circuit artifacts, but is not the production authorization server; it must run in a hardened environment with secrets management and checksum-verified artifacts.
 - **Blockchain**: immutable audit log; no PII/PHI is stored.
 
 ## Production Hardening Checklist
 
-- SMART OAuth keys stored in secure secrets manager.
+- External SMART/OIDC issuer, JWKS, introspection endpoint, and client credentials configured.
+- Gateway signing key stored in a secure secrets manager.
 - Circuit artifacts pinned with checksums.
 - Contract addresses pinned and verified on deployment.
 - Rate limiting and anomaly detection configured.
-- Monitoring for /health, /ready, and audit failures.
+- Mobile release builds ship with HTTPS/WSS only and TLS pin configuration for every production host they call.
+- CI verifies a fresh checkout build/test path on Node 20.
+- Monitoring for `/health`, `/ready`, and audit failures.

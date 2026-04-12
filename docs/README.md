@@ -11,10 +11,10 @@ Welcome to ZK Guardian documentation. This folder contains the operational and a
 
 ## Production Runbooks
 
-- **Gateway**: environment variables, Prisma migrations, and health checks.
+- **Gateway**: external SMART/OIDC config, secrets manager, Prisma migrations, and health checks.
 - **Circuits**: trusted setup, checksum generation, and artifact packaging.
 - **Contracts**: deployment, verification, and registry address updates.
-- **Mobile**: SMART config, certificate pinning, and release builds.
+- **Mobile**: SMART config, `TLS_PIN_MAP`, certificate pinning, and release builds.
 
 ## Suggested Reading Order
 

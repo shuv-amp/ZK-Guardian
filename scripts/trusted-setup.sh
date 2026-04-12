@@ -146,25 +146,10 @@ generate_solidity_verifier() {
     log_info "Solidity verifier generated: $verifier_file"
 }
 
-# Copy artifacts to expected locations
+# Artifacts remain in the canonical build tree
 copy_artifacts() {
     local circuit_name=$1
-    local circuit_build_dir="$BUILD_DIR/$circuit_name"
-    
-    log_info "Copying artifacts to circuits directory..."
-    
-    # Copy WASM
-    if [ -d "$circuit_build_dir/${circuit_name}_js" ]; then
-        cp -r "$circuit_build_dir/${circuit_name}_js" "$CIRCUITS_DIR/"
-    fi
-    
-    # Copy zkey
-    cp "$circuit_build_dir/${circuit_name}_final.zkey" "$CIRCUITS_DIR/"
-    
-    # Copy verification key
-    cp "$circuit_build_dir/${circuit_name}_verification_key.json" "$CIRCUITS_DIR/"
-    
-    log_info "Artifacts copied successfully"
+    log_info "Artifacts for ${circuit_name} are available under ${BUILD_DIR}/${circuit_name}"
 }
 
 # Main function
@@ -194,6 +179,12 @@ main() {
         
         log_info "Completed: $circuit"
     done
+
+    if [ -x "$CIRCUITS_DIR/scripts/generate-checksums.sh" ]; then
+        "$CIRCUITS_DIR/scripts/generate-checksums.sh"
+    else
+        bash "$CIRCUITS_DIR/scripts/generate-checksums.sh"
+    fi
     
     log_info "=========================================="
     log_info "Trusted setup complete!"

@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import request from 'supertest';
 import express, { Express } from 'express';
 
+process.env.POLYGON_AMOY_RPC = 'https://rpc-amoy.polygon.technology';
+process.env.AUDIT_CONTRACT_ADDRESS = '0x0000000000000000000000000000000000000001';
+process.env.GATEWAY_PRIVATE_KEY = '0x0123456789012345678901234567890123456789012345678901234567890123';
+
 const mockGenerate = vi.fn();
 const mockRequestConsent = vi.fn();
 const mockAxiosPut = vi.fn();
@@ -13,6 +17,7 @@ const mockReplayFailed = vi.fn();
 const mockRecordAccessEvent = vi.fn();
 const mockWebhookEmit = vi.fn();
 const mockVerifyAndAudit = vi.fn();
+const mockCheckAccessRestrictions = vi.fn();
 
 vi.mock('../modules/security/zkProofService.js', () => ({
     zkProofService: {
@@ -42,6 +47,10 @@ vi.mock('../modules/notification/webhookService.js', () => ({
     webhookService: {
         emit: (...args: any[]) => mockWebhookEmit(...args)
     }
+}));
+
+vi.mock('../routes/patientPreferences.js', () => ({
+    checkAccessRestrictions: (...args: any[]) => mockCheckAccessRestrictions(...args)
 }));
 
 vi.mock('../db/redis.js', () => ({
@@ -109,14 +118,15 @@ describe('FHIR Proxy Routes', () => {
         mockGenerate.mockResolvedValue(createMockProof());
         mockRequestConsent.mockResolvedValue({
             approved: true,
-            nullifier: '999999',
-            sessionNonce: '777777'
+            nullifier: '0x999999',
+            sessionNonce: '0x777777'
         });
         mockReplayCheckAndReserve.mockResolvedValue({ isNew: true });
         mockReplayConfirm.mockResolvedValue(undefined);
         mockReplayFailed.mockResolvedValue(undefined);
         mockRecordAccessEvent.mockResolvedValue(undefined);
         mockWebhookEmit.mockResolvedValue(undefined);
+        mockCheckAccessRestrictions.mockResolvedValue({ allowed: true });
         mockVerifyAndAudit.mockResolvedValue({
             wait: async () => ({ hash: '0xmocktx', blockNumber: 123 })
         });

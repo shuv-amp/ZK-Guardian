@@ -11,6 +11,7 @@
     import { randomUUID } from 'crypto';
 
     import { env } from './config/env.js';
+    import { initializeSecrets } from './config/secrets.js';
     import { prisma, testDatabaseConnection, disconnectDatabase } from './db/client.js';
     import { testRedisConnection, disconnectRedis } from './db/redis.js';
     import { healthRouter } from './routes/health.js';
@@ -28,8 +29,7 @@
     import { smartAuthMiddleware } from './middleware/smartAuth.js';
     import { breakGlassMiddleware } from './middleware/breakGlass.js';
     import { rateLimitMiddleware } from './middleware/rateLimit.js';
-    import { apiKeyAuth, flexibleAuth } from './middleware/apiKeyAuth.js';
-    import { tenantMiddleware } from './middleware/tenantMiddleware.js';
+    import { apiKeyAuth } from './middleware/apiKeyAuth.js';
     import { setupConsentWebSocket } from './modules/consent/consentHandshake.js';
     import { batchAuditService } from './modules/audit/batchAuditService.js';
     import { webhookService } from './modules/notification/webhookService.js';
@@ -153,6 +153,26 @@
         try {
             logSystemEvent({ event: 'STARTUP', details: `Starting ZK Guardian Gateway v${env.npm_package_version || '1.0.0'}` });
 
+            if (env.NODE_ENV === 'production') {
+                if (env.ALLOW_DEV_BYPASS) {
+                    throw new Error('ALLOW_DEV_BYPASS must be false in production');
+                }
+                if (env.ENABLE_SYNTHETIC_CONSENT) {
+                    throw new Error('ENABLE_SYNTHETIC_CONSENT must be false in production');
+                }
+                if (env.SMART_AUTH_MODE !== 'external') {
+                    throw new Error('SMART_AUTH_MODE must be external in production');
+                }
+                if (!env.SMART_ISSUER || !env.SMART_JWKS_URI || !env.SMART_AUTHORIZATION_ENDPOINT || !env.SMART_TOKEN_ENDPOINT || !env.SMART_INTROSPECTION_ENDPOINT) {
+                    throw new Error('External SMART/OIDC endpoints are required in production');
+                }
+                if (!env.SMART_CLIENT_ID || !env.SMART_CLIENT_SECRET) {
+                    throw new Error('SMART_CLIENT_ID and SMART_CLIENT_SECRET are required in production external auth mode');
+                }
+            }
+
+            await initializeSecrets();
+
             // Test database connection
             const dbConnected = await testDatabaseConnection();
             if (dbConnected) {
@@ -213,9 +233,14 @@
             await complianceService.initialize();
             logSystemEvent({ event: 'COMPLIANCE_SERVICE_READY' });
 
-            // Start batch audit processor
-            await batchAuditService.initialize();
-            batchAuditService.start();
+            // Batch audit is intentionally opt-in while direct verifyAndAudit
+            // remains the supported production path.
+            if (env.ENABLE_BATCH_AUDIT) {
+                await batchAuditService.initialize();
+                batchAuditService.start();
+            } else {
+                logger.info('Batch audit processor disabled');
+            }
 
             // Start webhook delivery processor
             webhookService.start();

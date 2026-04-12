@@ -31,7 +31,7 @@
                 "USE_BIOMETRIC",
                 "USE_FINGERPRINT"
             ],
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": false
         },
         "web": {
             "bundler": "metro",

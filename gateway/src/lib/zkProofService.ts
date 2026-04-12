@@ -12,15 +12,20 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { env } from '../config/env.js';
+import { getGatewayPrivateKey } from '../config/secrets.js';
 import { logger } from './logger.js';
 import { merkleTreeService } from '../modules/audit/merkleTreeService.js';
+import { parseFieldElementInput } from './fieldEncoding.js';
+import { prisma } from '../db/client.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Canonical circuit artifact location in this monorepo.
 // Layout: <repo>/circuits/build/<CircuitName>/...
-const CIRCUITS_DIR = path.resolve(__dirname, '../../../circuits/build');
+const CIRCUITS_DIR = env.CIRCUIT_ARTIFACTS_DIR
+    ? path.resolve(env.CIRCUIT_ARTIFACTS_DIR)
+    : path.resolve(__dirname, '../../../circuits/build');
 const BREAK_GLASS_DIR = path.join(CIRCUITS_DIR, 'BreakGlass');
 
 // ZKGuardianAudit ABI
@@ -124,10 +129,11 @@ function sessionNonceToField(sessionNonce?: string): bigint {
     if (!sessionNonce) {
         return BigInt(Math.floor(Math.random() * 1e9));
     }
-    if (/^[0-9]+$/.test(sessionNonce)) {
-        return BigInt(sessionNonce);
+    try {
+        return parseFieldElementInput(sessionNonce);
+    } catch {
+        return stringToFieldElement(sessionNonce);
     }
-    return stringToFieldElement(sessionNonce);
 }
 
 async function sendTxWithNonceRetry(
@@ -166,17 +172,16 @@ async function sendTxWithNonceRetry(
 }
 
 /**
- * Sync credential tree with blockchain (or simulated source for this demo)
+ * Rebuild the in-memory credential tree from persisted clinician registrations.
  */
 async function syncCredentialTree(): Promise<void> {
     await merkleTreeService.initialize();
+    const clinicians = await prisma.clinicianIdentity.findMany({
+        select: { credentialHash: true },
+        orderBy: { registeredAt: 'asc' }
+    });
 
-    // In a real app, we would fetch events or query the subgraph.
-    // For this implementation, we will add a mock credential for the current clinician if needed,
-    // or assume the tree service is managed by an admin process.
-
-    // DEMO LOGIC: Automatically register the clinician for Break-Glass
-    // In production, this would be an explicit "Credentialing" step.
+    merkleTreeService.setLeaves(clinicians.map((clinician) => BigInt(clinician.credentialHash)));
 }
 
 /**
@@ -188,12 +193,22 @@ export async function generateAndSubmitBreakGlassProof(
 ): Promise<ProofResult> {
     try {
         // Check configuration
-        const privateKey = env.GATEWAY_PRIVATE_KEY;
         const rpcUrl = env.POLYGON_AMOY_RPC;
         const auditAddress = env.AUDIT_CONTRACT_ADDRESS;
 
-        if (!privateKey || !rpcUrl || !auditAddress) {
+        if (!rpcUrl || !auditAddress) {
             logger.warn('Blockchain config missing for ZK proof submission');
+            return {
+                success: false,
+                error: 'Blockchain not configured (GATEWAY_PRIVATE_KEY, POLYGON_AMOY_RPC, AUDIT_CONTRACT_ADDRESS required)'
+            };
+        }
+
+        let privateKey: string;
+        try {
+            privateKey = await getGatewayPrivateKey();
+        } catch {
+            logger.warn('Gateway signing key unavailable for ZK proof submission');
             return {
                 success: false,
                 error: 'Blockchain not configured (GATEWAY_PRIVATE_KEY, POLYGON_AMOY_RPC, AUDIT_CONTRACT_ADDRESS required)'
@@ -251,11 +266,12 @@ export async function generateAndSubmitBreakGlassProof(
             facilityIdFields[0]
         ]);
 
-        // DEMO: Auto-add to tree if it's new (in prod, this would fail if not pre-registered)
-        try {
-            merkleTreeService.addCredential(credentialLeaf);
-        } catch (e) {
-            // Include duplicates is fine, or ignore if full
+        if (!merkleTreeService.hasCredential(credentialLeaf)) {
+            logger.error({ clinicianId: input.clinicianId }, 'Clinician credential not registered in local Merkle tree');
+            return {
+                success: false,
+                error: 'Clinician credential not registered for break-glass access'
+            };
         }
 
         const merkleProof = merkleTreeService.generateProof(credentialLeaf);
@@ -293,15 +309,13 @@ export async function generateAndSubmitBreakGlassProof(
         const provider = new ethers.JsonRpcProvider(rpcUrl);
         const wallet = new ethers.Wallet(privateKey, provider);
         const contract = new ethers.Contract(auditAddress, ZK_GUARDIAN_AUDIT_ABI, provider);
-        let nextNonce: number | undefined;
 
-        // Keep on-chain registry state aligned with the root used by the generated proof.
-        // This prevents deterministic InvalidProof reverts from root mismatch in prototype mode.
+        // In production we require the credential registry to already contain the clinician
+        // and the registry root to match the locally reconstructed proof root.
         try {
             const registryAddress = await contract.credentialRegistry();
             if (registryAddress && registryAddress !== ethers.ZeroAddress) {
                 const registryRead: any = new ethers.Contract(registryAddress, CREDENTIAL_REGISTRY_ABI, provider);
-                const registryWrite: any = registryRead.connect(wallet);
                 const credentialLeafHex = bigintToBytes32(credentialLeaf);
                 const proofRootHex = bigintToBytes32(merkleProof.root);
 
@@ -311,47 +325,22 @@ export async function generateAndSubmitBreakGlassProof(
                 ]);
 
                 if (!credentialValid) {
-                    try {
-                        const addTx = await sendTxWithNonceRetry(
-                            (overrides?: Record<string, any>) => registryWrite.addCredential(credentialLeafHex, overrides || {}),
-                            provider,
-                            wallet.address
-                        );
-                        await addTx.wait();
-                        if (typeof addTx.nonce === 'number') {
-                            nextNonce = addTx.nonce + 1;
-                        }
-                        logger.info({ credentialLeafHex }, 'Credential leaf registered on-chain');
-                    } catch (error: any) {
-                        logger.warn({ error: error.message }, 'Credential registration skipped (already exists or missing role)');
-                    }
+                    logger.error({ credentialLeafHex }, 'Clinician credential missing from on-chain registry');
+                    return {
+                        success: false,
+                        error: 'Clinician credential not registered on-chain'
+                    };
                 }
 
                 if (String(onChainRoot).toLowerCase() !== proofRootHex.toLowerCase()) {
-                    const leafCount = Math.max(1, merkleTreeService.getLeafCount());
-                    try {
-                        const updateTx = await sendTxWithNonceRetry(
-                            (overrides?: Record<string, any>) => registryWrite.updateMerkleRoot(proofRootHex, leafCount, overrides || {}),
-                            provider,
-                            wallet.address,
-                            nextNonce !== undefined ? { nonce: nextNonce } : undefined
-                        );
-                        await updateTx.wait();
-                        if (typeof updateTx.nonce === 'number') {
-                            nextNonce = updateTx.nonce + 1;
-                        }
-                        logger.info({
-                            previousRoot: onChainRoot,
-                            newRoot: proofRootHex,
-                            leafCount
-                        }, 'Credential registry root updated to match proof root');
-                    } catch (error: any) {
-                        logger.warn({
-                            error: error.message,
-                            onChainRoot,
-                            proofRootHex
-                        }, 'Unable to update credential root on-chain');
-                    }
+                    logger.error({
+                        onChainRoot,
+                        proofRootHex
+                    }, 'Credential registry root is out of sync with local Merkle tree');
+                    return {
+                        success: false,
+                        error: 'Credential registry root is out of sync'
+                    };
                 } else {
                     logger.info({ onChainRoot }, 'Credential root already aligned');
                 }
@@ -396,15 +385,13 @@ export async function generateAndSubmitBreakGlassProof(
                     { gasLimit, ...(overrides || {}) }
                 ),
                 provider,
-                wallet.address,
-                nextNonce !== undefined ? { nonce: nextNonce } : undefined
+                wallet.address
             );
         } else {
             tx = await sendTxWithNonceRetry(
                 (overrides?: Record<string, any>) => verifyBreakGlassFn(pA, pB, pC, pubSignals, requiredThreshold, overrides || {}),
                 provider,
-                wallet.address,
-                nextNonce !== undefined ? { nonce: nextNonce } : undefined
+                wallet.address
             );
         }
 

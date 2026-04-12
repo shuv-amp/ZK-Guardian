@@ -29,6 +29,17 @@ interface AuthCodeEntry {
 const authCodes = new Map<string, AuthCodeEntry>();
 const AUTH_CODE_PREFIX = 'oauth:code:';
 
+oauthRouter.use((_req, res, next) => {
+    if (env.SMART_AUTH_MODE !== 'local') {
+        return res.status(404).json({
+            error: 'LOCAL_SMART_AUTH_DISABLED',
+            message: 'Local SMART authorization endpoints are disabled'
+        });
+    }
+
+    next();
+});
+
 // Custom scheme redirects (zkguardian://) don't play nice with CSP.
 // So we drop the headers here.
 oauthRouter.use((_req, res, next) => {

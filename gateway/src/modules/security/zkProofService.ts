@@ -24,12 +24,14 @@ import { prisma } from "../../db/client.js";
 
 // In production, these should be environment variables or copied to build dir
 // For monorepo dev, we point to the siblings
-const CIRCUITS_BUILD_DIR = path.resolve(__dirname, "../../../circuits/build");
+const CIRCUITS_BUILD_DIR = env.CIRCUIT_ARTIFACTS_DIR
+    ? path.resolve(env.CIRCUIT_ARTIFACTS_DIR)
+    : path.resolve(__dirname, "../../../circuits/build");
 const SECURE_CIRCUIT_DIR = path.join(CIRCUITS_BUILD_DIR, "AccessIsAllowedSecure");
 const CIRCUIT_WASM = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_js/AccessIsAllowedSecure.wasm");
 const CIRCUIT_ZKEY = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_final.zkey");
 const VERIFICATION_KEY = path.join(SECURE_CIRCUIT_DIR, "AccessIsAllowedSecure_verification_key.json");
-const CHECKSUMS_FILE = path.resolve(__dirname, "../../../circuits/checksums.sha256");
+const CHECKSUMS_FILE = path.resolve(CIRCUITS_BUILD_DIR, "../../checksums.sha256");
 
 const HAPI_FHIR_URL = env.HAPI_FHIR_URL || "http://localhost:8080/fhir";
 
@@ -632,16 +634,35 @@ class ZKProofService {
         }
 
         const checksumEntries = this.loadChecksumEntries();
+        if (env.NODE_ENV === 'production' && checksumEntries.length === 0) {
+            errors.push(`Circuit checksums are required in production: ${CHECKSUMS_FILE}`);
+        }
 
-        // Optional: Compare against known good checksums from environment or checksums file
+        // Compare against known-good checksums from environment or the canonical checksum manifest.
         const expectedWasmHash = process.env.CIRCUIT_WASM_SHA256 || this.findChecksum(checksumEntries, CIRCUIT_WASM);
         const expectedZkeyHash = process.env.CIRCUIT_ZKEY_SHA256 || this.findChecksum(checksumEntries, CIRCUIT_ZKEY);
+        const expectedVkeyHash = process.env.CIRCUIT_VKEY_SHA256 || this.findChecksum(checksumEntries, VERIFICATION_KEY);
+
+        if (env.NODE_ENV === 'production') {
+            if (!expectedWasmHash) {
+                errors.push('Missing expected checksum for circuit WASM');
+            }
+            if (!expectedZkeyHash) {
+                errors.push('Missing expected checksum for circuit ZKEY');
+            }
+            if (!expectedVkeyHash) {
+                errors.push('Missing expected checksum for verification key');
+            }
+        }
 
         if (expectedWasmHash && checksums.wasm !== expectedWasmHash) {
             errors.push(`WASM checksum mismatch: expected ${expectedWasmHash}, got ${checksums.wasm}`);
         }
         if (expectedZkeyHash && checksums.zkey !== expectedZkeyHash) {
             errors.push(`ZKEY checksum mismatch: expected ${expectedZkeyHash}, got ${checksums.zkey}`);
+        }
+        if (expectedVkeyHash && checksums.vkey !== expectedVkeyHash) {
+            errors.push(`Verification key checksum mismatch: expected ${expectedVkeyHash}, got ${checksums.vkey}`);
         }
 
         const result = {

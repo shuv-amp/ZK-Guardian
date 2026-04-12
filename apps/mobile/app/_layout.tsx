@@ -26,7 +26,8 @@ function ConfigurationError() {
             <Text style={styles.errorTitle}>Configuration Required</Text>
             <Text style={styles.errorText}>
                 The app is not configured to connect to the backend.
-                Please set GATEWAY_URL and WS_URL in your app configuration.
+                Production builds require `GATEWAY_URL`, `WS_URL`, and `TLS_PIN_MAP`
+                with HTTPS/WSS endpoints and matching pinned hosts.
             </Text>
         </View>
     );

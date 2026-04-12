@@ -1,5 +1,6 @@
 import { config } from '../config/env';
 import { smartAuth } from './SMARTAuthService';
+import { secureFetch } from '../utils/secureFetch';
 
 /**
  * FHIRClient Service
@@ -150,7 +151,7 @@ export class FHIRClient {
         console.log(`[FHIRClient] ${options.method || 'GET'} ${url}`);
 
         try {
-            const response = await fetch(url, {
+            const response = await secureFetch(url, {
                 ...options,
                 headers
             });

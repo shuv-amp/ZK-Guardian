@@ -1,22 +1,30 @@
 
 import express, { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { prisma } from '../db/client.js';
 import { logger } from '../lib/logger.js';
 import { PatientIdentityService, ClinicianIdentityService } from '../modules/identity/identityService.js';
 import { AuthorizationError, ValidationError } from '../lib/errors.js';
 import { smartAuthMiddleware } from '../middleware/smartAuth.js';
+import {
+    formatFieldElementHex,
+    isFieldElementInput,
+    parseFieldElementInput
+} from '../lib/fieldEncoding.js';
 
 export const identityRouter: Router = Router();
 
 identityRouter.use(smartAuthMiddleware);
 
+const FieldElementSchema = z.string().min(1).refine(isFieldElementInput, {
+    message: 'Must be a valid hex or decimal field element string'
+});
+
 const RegisterPatientSchema = z.object({
-    nullifier: z.string().min(10, 'Nullifier must be a large integer string')
+    nullifier: FieldElementSchema
 });
 
 const BlindedIdentitySchema = z.object({
-    nullifier: z.string().min(10, 'Nullifier must be a large integer string')
+    nullifier: FieldElementSchema
 });
 
 const ClinicianRegisterSchema = z.object({
@@ -26,19 +34,19 @@ const ClinicianRegisterSchema = z.object({
 });
 
 const PatientResetSchema = z.object({
-    newNullifier: z.string().min(10, 'Nullifier must be a large integer string')
+    newNullifier: FieldElementSchema
 });
 
 // Schema for Identity Reset
 const ResetIdentitySchema = z.object({
-    newNullifier: z.string().min(10, "Nullifier must be a large integer string")
+    newNullifier: FieldElementSchema
 });
 
 const parseNullifier = (value: string, fieldName: string): bigint => {
     try {
-        return BigInt(value);
+        return parseFieldElementInput(value);
     } catch (error) {
-        throw new ValidationError('Invalid nullifier format', [{ path: fieldName, message: 'Must be a valid integer string' }]);
+        throw new ValidationError('Invalid nullifier format', [{ path: fieldName, message: 'Must be a valid hex or decimal integer string' }]);
     }
 };
 
@@ -87,7 +95,7 @@ identityRouter.post('/patient/blinded', async (req: Request, res: Response, next
 
         res.json({
             blindedIdFields: result.blindedIdFields.map(field => field.toString()),
-            sessionNonce: result.sessionNonce.toString()
+            sessionNonce: formatFieldElementHex(result.sessionNonce)
         });
     } catch (error) {
         next(error);
@@ -170,17 +178,12 @@ identityRouter.post('/reset-identity', async (req: Request, res: Response, next:
 
         const body = ResetIdentitySchema.parse(req.body);
 
-        // Parse nullifier as BigInt safe
-        let nullifierBigInt: bigint;
-        try {
-            nullifierBigInt = BigInt(body.newNullifier);
-        } catch (e) {
-            throw new ValidationError('Invalid nullifier format', [{ path: 'newNullifier', message: 'Must be a valid integer string' }]);
-        }
-
         logger.warn({ patientId: smartContext.patient }, 'SECURITY: Initiating Identity Reset / Nullifier Rotation');
 
-        await PatientIdentityService.resetIdentity(smartContext.patient, nullifierBigInt);
+        await PatientIdentityService.resetIdentity(
+            smartContext.patient,
+            parseNullifier(body.newNullifier, 'newNullifier')
+        );
 
         res.json({
             success: true,
