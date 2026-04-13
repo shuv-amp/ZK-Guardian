@@ -87,6 +87,14 @@ Then run the `Staging Validation` workflow from GitHub Actions. It will execute 
 
 Use this when you want a realistic external-auth rehearsal before a live staging run. The mock server issues signed JWTs, serves JWKS, enforces PKCE on the auth-code flow, and supports introspection plus revocation.
 
+Fastest path:
+
+```bash
+pnpm gateway:rehearse:mock-smart
+```
+
+That runner expects local PostgreSQL and Redis, starts the mock issuer, starts the gateway with the external-auth overlay, runs the verifier against the live gateway, writes evidence to `.artifacts/mock-smart-rehearsal/latest.json`, and then cleans up both processes.
+
 Start the mock issuer:
 
 ```bash

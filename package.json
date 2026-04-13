@@ -19,6 +19,7 @@
     "contracts:deploy": "pnpm --filter contracts deploy:amoy",
     "gateway:dev": "pnpm --filter gateway dev",
     "gateway:mock-smart-idp": "pnpm --filter gateway mock:smart-idp",
+    "gateway:rehearse:mock-smart": "bash scripts/run_mock_smart_rehearsal.sh",
     "gateway:verify:mock-smart": "pnpm --filter gateway verify:mock-smart",
     "mobile:start": "pnpm --filter mobile start",
     "mobile:ios": "pnpm --filter mobile ios",
