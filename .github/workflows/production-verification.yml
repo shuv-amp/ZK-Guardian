@@ -74,6 +74,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install local service clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client redis-tools
+
       - name: Apply Prisma migrations
         run: pnpm --filter gateway exec prisma migrate deploy
 
@@ -85,3 +90,14 @@ jobs:
 
       - name: Lint mobile app
         run: pnpm --filter mobile lint
+
+      - name: Rehearse external SMART auth locally
+        run: pnpm gateway:rehearse:mock-smart
+
+      - name: Upload mock SMART rehearsal artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-smart-rehearsal-${{ github.run_id }}
+          path: .artifacts/mock-smart-rehearsal/
+          if-no-files-found: warn
