@@ -43,6 +43,31 @@ Prepare these inputs before you start:
 - Staging mobile build configured with the staging gateway host and real TLS pins
 - Access to staging logs for gateway, Postgres, Redis, and the external IdP
 
+## Validation Helper
+
+The repo includes a helper that executes the public checks automatically and records evidence to `.artifacts/staging-validation/latest.json`.
+
+Public-surface validation:
+
+```bash
+BASE_URL="https://gateway-staging.example.com" \
+pnpm --filter gateway verify:staging
+```
+
+Extended validation with authenticated routes and consent socket auth:
+
+```bash
+BASE_URL="https://gateway-staging.example.com" \
+WS_URL="wss://gateway-staging.example.com/ws/consent" \
+PATIENT_ID="patient-123" \
+PATIENT_ACCESS_TOKEN="..." \
+CLINICIAN_ACCESS_TOKEN="..." \
+REVOKED_ACCESS_TOKEN="..." \
+pnpm --filter gateway verify:staging -- --strict
+```
+
+Use `pnpm --filter gateway verify:staging -- --help` to see all supported inputs.
+
 ## Preflight
 
 ### Gateway Environment

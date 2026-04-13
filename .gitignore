@@ -67,3 +67,4 @@ pnpm-debug.log*
 
 # Misc
 data_flow.md
+.artifacts/
