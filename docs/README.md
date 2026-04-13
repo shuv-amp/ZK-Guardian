@@ -11,6 +11,7 @@ Welcome to ZK Guardian documentation. This folder contains the operational and a
 
 ## Production Runbooks
 
+- [Staging validation runbook](./staging-validation-runbook.md): external SMART/OIDC smoke tests, consent WebSocket validation, audited access checks, break-glass checks, and native mobile production validation.
 - **Gateway**: external SMART/OIDC config, secrets manager, Prisma migrations, and health checks.
 - **Circuits**: trusted setup, checksum generation, and artifact packaging.
 - **Contracts**: deployment, verification, and registry address updates.
