@@ -12,6 +12,8 @@
         "build": "prisma generate && tsc",
         "start": "node dist/index.js",
         "test": "vitest run --pool=forks",
+        "mock:smart-idp": "tsx scripts/mock-smart-idp.ts",
+        "verify:mock-smart": "tsx scripts/mock-smart-verify.ts",
         "verify:full-flow": "tsx scripts/full-flow-verify.ts",
         "verify:staging": "tsx scripts/staging-validation.ts",
         "lint": "eslint src --ext .ts",

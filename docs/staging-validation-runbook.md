@@ -83,6 +83,47 @@ Set these GitHub environment values before running it:
 
 Then run the `Staging Validation` workflow from GitHub Actions. It will execute the validator in strict mode and upload the evidence JSON as a workflow artifact.
 
+## Local Mock External SMART Drill
+
+Use this when you want a realistic external-auth rehearsal before a live staging run. The mock server issues signed JWTs, serves JWKS, enforces PKCE on the auth-code flow, and supports introspection plus revocation.
+
+Start the mock issuer:
+
+```bash
+pnpm --filter gateway mock:smart-idp
+```
+
+Point the gateway at it with an external-auth env overlay:
+
+```bash
+SMART_AUTH_MODE=external
+SMART_ISSUER=http://127.0.0.1:4010
+SMART_AUTHORIZATION_ENDPOINT=http://127.0.0.1:4010/authorize
+SMART_TOKEN_ENDPOINT=http://127.0.0.1:4010/token
+SMART_INTROSPECTION_ENDPOINT=http://127.0.0.1:4010/introspect
+SMART_REVOCATION_ENDPOINT=http://127.0.0.1:4010/revoke
+SMART_JWKS_URI=http://127.0.0.1:4010/.well-known/jwks.json
+SMART_CLIENT_ID=zk-guardian-gateway
+SMART_CLIENT_SECRET=mock-smart-secret
+SMART_AUDIENCE=http://localhost:8080/fhir
+```
+
+Then run the mock verifier:
+
+```bash
+pnpm --filter gateway verify:mock-smart
+```
+
+If the gateway is running with the overlay above, add its URLs to exercise the real gateway auth boundary too:
+
+```bash
+BASE_URL="http://127.0.0.1:3000" \
+WS_URL="ws://127.0.0.1:3000/ws/consent" \
+pnpm --filter gateway verify:mock-smart
+```
+
+The mock verifier writes evidence to `.artifacts/mock-smart-validation/latest.json`.
+
 ## Preflight
 
 ### Gateway Environment
