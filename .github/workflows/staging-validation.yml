@@ -1,0 +1,80 @@
+name: Staging Validation
+
+"on":
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '10.13.1'
+
+jobs:
+  validate-staging:
+    name: Run staging validator
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    permissions:
+      contents: read
+
+    env:
+      BASE_URL: ${{ vars.STAGING_BASE_URL }}
+      WS_URL: ${{ vars.STAGING_WS_URL }}
+      PATIENT_ID: ${{ vars.STAGING_PATIENT_ID }}
+      PATIENT_ACCESS_TOKEN: ${{ secrets.STAGING_PATIENT_ACCESS_TOKEN }}
+      CLINICIAN_ACCESS_TOKEN: ${{ secrets.STAGING_CLINICIAN_ACCESS_TOKEN }}
+      REVOKED_ACCESS_TOKEN: ${{ secrets.STAGING_REVOKED_ACCESS_TOKEN }}
+      EXPECT_EXTERNAL_AUTH: 'true'
+      STRICT_STAGING_VALIDATION: 'true'
+      OUTPUT_PATH: '.artifacts/staging-validation/github-${{ github.run_id }}.json'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate staging environment inputs
+        run: |
+          missing=0
+
+          require_var() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "::error::$name is not configured in the GitHub staging environment"
+              missing=1
+            fi
+          }
+
+          require_var "vars.STAGING_BASE_URL" "${BASE_URL}"
+          require_var "vars.STAGING_PATIENT_ID" "${PATIENT_ID}"
+          require_var "secrets.STAGING_PATIENT_ACCESS_TOKEN" "${PATIENT_ACCESS_TOKEN}"
+          require_var "secrets.STAGING_CLINICIAN_ACCESS_TOKEN" "${CLINICIAN_ACCESS_TOKEN}"
+          require_var "secrets.STAGING_REVOKED_ACCESS_TOKEN" "${REVOKED_ACCESS_TOKEN}"
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run staging validation
+        run: pnpm --filter gateway verify:staging -- --strict
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-validation-${{ github.run_id }}
+          path: .artifacts/staging-validation/
+          if-no-files-found: warn

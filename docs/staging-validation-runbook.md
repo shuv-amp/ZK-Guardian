@@ -68,6 +68,21 @@ pnpm --filter gateway verify:staging -- --strict
 
 Use `pnpm --filter gateway verify:staging -- --help` to see all supported inputs.
 
+## GitHub Staging Workflow
+
+GitHub now has a `staging` environment and a manual workflow at `.github/workflows/staging-validation.yml`.
+
+Set these GitHub environment values before running it:
+
+- variable `STAGING_BASE_URL`
+- variable `STAGING_WS_URL`
+- variable `STAGING_PATIENT_ID`
+- secret `STAGING_PATIENT_ACCESS_TOKEN`
+- secret `STAGING_CLINICIAN_ACCESS_TOKEN`
+- secret `STAGING_REVOKED_ACCESS_TOKEN`
+
+Then run the `Staging Validation` workflow from GitHub Actions. It will execute the validator in strict mode and upload the evidence JSON as a workflow artifact.
+
 ## Preflight
 
 ### Gateway Environment
