@@ -18,6 +18,8 @@
     "contracts:test": "pnpm --filter contracts test",
     "contracts:deploy": "pnpm --filter contracts deploy:amoy",
     "gateway:dev": "pnpm --filter gateway dev",
+    "gateway:mock-smart-idp": "pnpm --filter gateway mock:smart-idp",
+    "gateway:verify:mock-smart": "pnpm --filter gateway verify:mock-smart",
     "mobile:start": "pnpm --filter mobile start",
     "mobile:ios": "pnpm --filter mobile ios",
     "mobile:android": "pnpm --filter mobile android"
