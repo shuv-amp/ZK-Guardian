@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload mock SMART rehearsal artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mock-smart-rehearsal-${{ github.run_id }}
           path: .artifacts/mock-smart-rehearsal/
